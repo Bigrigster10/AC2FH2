@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# third-party tools without a licence: local use only
+thirdparty_eo_tools/
+out/
