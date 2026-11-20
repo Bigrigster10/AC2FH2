@@ -3,3 +3,4 @@ __pycache__/
 # third-party tools without a licence: local use only
 thirdparty_eo_tools/
 out/
+AC2FH2-backup.bundle
