@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.4 sent for testing)
+## Status (v0.5 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -19,7 +19,12 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
   rim fitted by its own extents (AC rim mesh drawn 21" vs 18" in tyres.ini; RIM_BLUR excluded).
 - Open: rims vanish at speed (donor wheel has blurRim/blurLip meshes, lod_flags 2, bucket 28, 'wheel_blur'
   material; ours has none); jitter; our hp 586 vs ui 674 (turbo model).
-- Next: confirm black body fixed; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.4 tested: BLACK FIXED (paint, glass, interior, lights render), steering OK. Left: rims invisible while
+  driving (we saw the donor brake disc through them), thumbnail = dark AC photo, paint list 1 colour + blanks.
+- v0.5: every mesh valid at all 6 LODs (mesh lod_flags 0x7F, Modl lod_min 5 / flags 127; game uses LOD1+ for wheels
+  while driving); ManufacturerColors.bin generated from AC skins -> nearest _library paint (colors.py, format verified
+  byte-exact) + matching Combo_Colors; thumbnails rendered on white by thumbnail.py (software renderer).
+- Next: confirm rims/paints/tiles in game; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

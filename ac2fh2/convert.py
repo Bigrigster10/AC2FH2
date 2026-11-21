@@ -361,6 +361,13 @@ def convert(s: Settings):
     model_name = s.name or re.sub(rf'^{re.escape(brand)}\s*', '', ui.get('name', car.car_id)).strip() or car.car_id
     short = s.short or f"{brand} {model_name.split()[0]} '{year % 100:02d}"
     skin = s.skin or (sorted(car.skins)[0] if car.skins else None)
+    from . import colors
+    try:
+        paints = colors.from_skins(car.skins, skin, colors.harvest(s.fh2_cars), None)
+    except Exception as e:
+        log(f'  ! paint list: {e}'); paints = []
+    if paints:
+        log(f'  factory paints: {", ".join(f"{p[0]} -> {p[1].split(chr(92))[-1][:-12]}" for p in paints)}')
     log(f'  {len(car.meshes)} meshes, {len(car.materials)} materials, skin: {skin}')
 
     # donors
@@ -531,6 +538,8 @@ def convert(s: Settings):
             data = rim[0]
         elif low == donor.carbin_name.lower():
             data = sc.build()
+        elif low == 'manufacturercolors.bin' and paints:
+            data = colors.build([[(p[2], p[3], p[1])] for p in paints])
         elif low == skel_entry:
             sk = Bundle.parse(data); sk.first('Skel').data = skel_data; data = _retarget_modelbin(sk.build(), old, new)
         elif low == 'locators.xml' and spindle is not None:
@@ -562,6 +571,8 @@ def convert(s: Settings):
 
     nc = database.NewCar(s.car_id, new, model_name, short, year, donor.car_id, phys_id, ident_id)
     doc, strings = database.build(s.gamedb, nc)
+    if paints:   # Autoshow / default paint rows follow the manufacturer list
+        doc['tables']['Combo_Colors'] = {'key': ['ID'], 'insert': colors.combo_rows(s.gamedb, s.car_id, paints)}
     physics.apply(doc, s.gamedb, s.car_id, ph, log)
     bodykit = ('List_UpgradeCarBodyFrontBumper', 'List_UpgradeCarBodyRearBumper', 'List_UpgradeCarBodySideSkirt',
                'List_UpgradeCarBodyHood', 'List_UpgradeRearWing')
@@ -583,10 +594,16 @@ def convert(s: Settings):
                'description': f'Converted from Assetto Corsa ({car.car_id}).',
                'database': 'database.json', 'media': 'media', 'dependencies': []},
               open(os.path.join(root, 'mod.json'), 'w'), indent=2)
-    prev = car.skins.get(skin, {}).get('preview.jpg') if skin else None
-    src = Image.open(prev) if prev else Image.new('RGB', (816, 459), (40, 40, 40))
     tdir = os.path.join(root, 'media', 'stripped', 'RC0'); os.makedirs(tdir, exist_ok=True)
+    from . import thumbnail
+    paint_rgb = paints[0][3] if paints else (0.5, 0.5, 0.52)
     for suf, (w, h) in (('Big', (816, 459)), ('Small', (192, 108))):
-        open(os.path.join(tdir, f'Thumbnail_{s.car_id}_{suf}.swatchbin'), 'wb').write(_thumb_swatch(_thumb(src, w, h), w, h))
+        try:
+            img = thumbnail.render(car, paint_rgb, bank.image, size=(w, h))
+        except Exception as e:                 # fall back to the AC preview photo
+            log(f'  ! thumbnail render failed ({e}); using the AC preview')
+            prev = car.skins.get(skin, {}).get('preview.jpg') if skin else None
+            img = _thumb(Image.open(prev) if prev else Image.new('RGB', (w, h), (240, 240, 240)), w, h)
+        open(os.path.join(tdir, f'Thumbnail_{s.car_id}_{suf}.swatchbin'), 'wb').write(_thumb_swatch(img.convert('RGBA'), w, h))
     log(f'Done: {root}')
     return root

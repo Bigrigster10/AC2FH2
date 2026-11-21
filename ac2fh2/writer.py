@@ -61,6 +61,11 @@ def _acmr(tris, cache=32):
     return miss / max(len(tris), 1)
 
 
+# Stock models carry 6 detail levels (LODS0/LOD0 = bits 0-1, LOD1..5 = bits 2..6; Modl lod_min 5, flags 127) and the
+# game picks one by distance/camera -- wheels use LOD1+ while driving. We have one mesh set, so it is valid at all of them.
+ALL_LODS = 0x7F
+
+
 def layout_flags(names, elems):
     """VLay flags = which optional streams exist (verified on every stock model):
     TEXCOORDn -> 1 << n, TANGENTn -> 1 << (n + 5). With 0 the shaders treat the mesh as having no UVs/tangents."""
@@ -106,7 +111,7 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
         uv_t = struct.pack('<4f', *uvt) * 4 + struct.pack('<4f', 0, 1, 0, 1)
         bucket = (BUCKET_TRANSPARENT | BUCKET_SHADOW | BUCKET_NOT_SHADOW | BUCKET_A2C) if mi.transparent \
             else (BUCKET_OPAQUE | BUCKET_NOT_SHADOW)
-        common = dict(bone=mi.bone, lod_flags=3, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
+        common = dict(bone=mi.bone, lod_flags=ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
                       morph_targets=0, morph_damage=0, idx32=1, topology=4, ib_index=0, ib_offset=0,
                       ib_draw_offset=istart, base_vertex=-vstart, index_count=len(tris) * 3, prim_count=len(tris),
                       acmr=_acmr(tris), ref_vertex_count=n, morph_buf=-1, skin_buf=-1, cbs=[], source_mesh=0)
@@ -132,7 +137,7 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
     blobs.append(Blob('VerB', 1, 0, Buffer(vstart, ATTR_STRIDE, len(full.elems) - 1, R16G16B16A16_FLOAT,
                                            b''.join(attrs)).build(), [_id(0)]))
     stats = ModelStats(meshes=len(mesh_blobs), buffers=3, layouts=2, materials=len(materials),
-                       has_lod=1, lod_min=0, lod_max=-1, lod_flags=0x3)
+                       has_lod=1, lod_min=5, lod_max=-1, lod_flags=ALL_LODS)
     tref = sorted(set(tref_hashes))
     mmeta = [Meta('BBox', _bbox(allpos))]
     if tref:
