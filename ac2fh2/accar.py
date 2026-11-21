@@ -42,7 +42,30 @@ def _flatten(node, parent=np.eye(4, dtype=np.float32), path=''):
         yield from _flatten(c, parent, p)
 
 
-def load(folder, kn5_name=None):
+def _handedness(pos, nrm, uv, tan, tris):
+    """tangent w (+1/-1) from UV winding, accumulated per vertex"""
+    p0, p1, p2 = pos[tris[:, 0]], pos[tris[:, 1]], pos[tris[:, 2]]
+    u0, u1, u2 = uv[tris[:, 0]], uv[tris[:, 1]], uv[tris[:, 2]]
+    e1, e2, d1, d2 = p1 - p0, p2 - p0, u1 - u0, u2 - u0
+    r = d1[:, 0] * d2[:, 1] - d2[:, 0] * d1[:, 1]
+    r = np.where(np.abs(r) < 1e-12, 1e-12, r)
+    bit = (e2 * d1[:, :1] - e1 * d2[:, :1]) / r[:, None]
+    acc = np.zeros_like(pos)
+    for k in range(3):
+        np.add.at(acc, tris[:, k], bit)
+    w = np.sign((np.cross(nrm, tan) * acc).sum(1))
+    return np.where(w == 0, 1, w).astype(np.float32)
+
+
+def _mirror_x(m):
+    """Assetto Corsa: +X = car's left.  FH2: -X = car's left.  Mirror and keep faces/tangents valid."""
+    for a in (m.pos, m.nrm, m.tan):
+        a[:, 0] *= -1
+    m.tan[:, 3] *= -1
+    m.tris = m.tris[:, ::-1].copy()
+
+
+def load(folder, kn5_name=None, fh2_axes=True):
     car_id = os.path.basename(os.path.normpath(folder))
     kn5_path = os.path.join(folder, kn5_name or f'{car_id}.kn5')
     if not os.path.exists(kn5_path):
@@ -59,9 +82,13 @@ def load(folder, kn5_name=None):
         tris = node.indices.reshape(-1, 3).astype(np.int64)
         if np.linalg.det(R) < 0:
             tris = tris[:, ::-1]
-        meshes.append(ACMesh(node.name, p, mats[node.material], pos[:, :3].astype(np.float32),
-                             nrm.astype(np.float32), v[:, 6:8].copy(), np.c_[tan3, np.ones(len(v))].astype(np.float32),
-                             tris))
+        pos3, uv = pos[:, :3].astype(np.float32), v[:, 6:8].copy()
+        nrm, tan3 = nrm.astype(np.float32), tan3.astype(np.float32)
+        w = _handedness(pos3, nrm, uv, tan3, tris)
+        m = ACMesh(node.name, p, mats[node.material], pos3, nrm, uv, np.c_[tan3, w].astype(np.float32), tris)
+        if fh2_axes:
+            _mirror_x(m)
+        meshes.append(m)
     data = {}
     dfolder = os.path.join(folder, 'data')
     if os.path.isdir(dfolder):
