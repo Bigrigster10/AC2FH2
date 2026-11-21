@@ -66,3 +66,9 @@ New car ids 3000-8999; car N owns ids N and N*1000..N*1000+999. ContentId must b
 - Stats/price predicted with sklearn GradientBoosting trained on the user's gamedb (PI err ~0.018, price ~x1.4).
   Class from PI cut-offs [0.436, 0.5265, 0.619, 0.7485, 0.8555] (D C B A S1 S2).
 - Saves: changing upgrade row ids crashes saves with the car -> tell user to sell/back up before updating.
+  CONFIRMED: v0.3 crashed at load (game+0x105beec, null row while reading ClutchMaxTorque, R15=3100) because the
+  save owned the v0.1 car (v0.1 used SUB_BRZ_13's engine/drivetrain part ids; v0.3 has its own EngineID/DrivetrainID
+  3100). Fix path: install v0.1 rebuild (commit 306c38f, cars without 22B), sell car, then v0.3. Keep stock part
+  ids stable (N*1000) from now on.
+- Audio: FH2 uses FMOD Studio banks (Media\Audio\FmodAnthem\DURANGO\*.bank; EO redirects bank loads) -> AC
+  sfx .bank files (also FMOD) may be usable; investigate per-car engine event names.
