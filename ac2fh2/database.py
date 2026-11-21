@@ -26,9 +26,11 @@ MODEL_TABLES = {
     'CameraOverrides': ('CarId', 'car'),
     'CarExceptions': ('CarID', 'car'),
 }
+IDENTITY_TABLES = {
+    'Data_Car_Buckets': ('CarId', 'car'),     # Autoshow group
+    'Combo_Colors': ('Ordinal', 'car'),       # factory paint colours
+}
 PHYSICS_TABLES = {
-    'Data_Car_Buckets': ('CarId', 'car'),
-    'Combo_Colors': ('Ordinal', 'car'),
     'List_AntiSwayPhysics': ('Ordinal', 'car'),
     'List_SpringDamperPhysics': ('Ordinal', 'car'),
     'List_UpgradeAntiSwayFront': ('Ordinal', 'car'),
@@ -50,6 +52,12 @@ PHYSICS_TABLES = {
 ID_COLUMNS = {'id', 'ordinal', 'carid', 'carbodyid', 'antiswayphysicsid', 'springdamperphysicsid',
               'frontspringdamperphysicsid', 'rearspringdamperphysicsid', 'modelid'}
 # Data_Car columns that describe the model (taken from the model donor, not the physics donor)
+# Data_Car columns that describe who makes the car (from the same-brand identity donor)
+IDENTITY_CAR_COLUMNS = ('MakeID', 'MakeName', 'MakeIcon', 'CountryID', 'RegionID', 'CarTypeID', 'FamilyModelID',
+                        'FamilyBodyID', 'FamilySpecialID', 'BaseRarity', 'TireBrandID',
+                        'BodyAeroLongitudinalDrag', 'BodyAeroVerticalDrag', 'BodyAeroLateralDragFront',
+                        'BodyAeroLateralDragRear', 'BodyAeroForwardDownforceFront', 'BodyAeroForwardDownforceRear',
+                        'BodyAeroAngleZeroDownforce', 'BodyAeroWIForceScale')
 MODEL_CAR_COLUMNS = ('StockWheelID', 'CaliperAngleFront', 'CaliperAngleRear', 'IsOpenCockpit', 'IsOpenWheel',
                      'HasLivery', 'WingMask', 'GaugeID')
 
@@ -63,6 +71,7 @@ class NewCar:
     year: int
     model_donor: int             # car id whose zip we build on
     physics_donor: int           # car id whose physics rows we copy
+    identity_donor: int = None   # same-brand car: make, Autoshow group, paint colours
     thumbnail_rc: str = 'RC0'
     overrides: dict = field(default_factory=dict)   # Data_Car column -> value
 
@@ -115,6 +124,10 @@ def build(db_path, car: NewCar):
     row = dict(phys)
     for c in MODEL_CAR_COLUMNS:
         if c in model: row[c] = model[c]
+    ident_id = car.identity_donor or car.physics_donor
+    ident = _rows(db, 'Data_Car', 'Id', 'car', ident_id)[0]
+    for c in IDENTITY_CAR_COLUMNS:
+        if c in ident: row[c] = ident[c]
     k1, k2 = (car.car_id * 10) % 65000, (car.car_id * 10 + 1) % 65000
     row.update(Id=car.car_id, ModelId=car.car_id, MediaName=car.media_name, Year=car.year,
                DisplayName=string_ref(k1), ModelShort=string_ref(k2), ContentId=0,
@@ -124,6 +137,8 @@ def build(db_path, car: NewCar):
 
     for t, (col, kind) in MODEL_TABLES.items():
         add(t, _rows(db, t, col, kind, car.model_donor), car.model_donor)
+    for t, (col, kind) in IDENTITY_TABLES.items():
+        add(t, _rows(db, t, col, kind, ident_id), ident_id)
     for t, (col, kind) in PHYSICS_TABLES.items():
         rows = _rows(db, t, col, kind, car.physics_donor)
         if kind == 'body':   # physical body rows: re-parent onto the model donor's body numbering first

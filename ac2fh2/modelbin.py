@@ -248,3 +248,28 @@ class Model:
         return dict(name=blob.name, material=me.material, lod=me.lod_flags, bucket=me.bucket_flags,
                     pos=out.get(('POSITION', 0)), nrm=out.get(('NORMAL', 0)), uv=out.get(('TEXCOORD', 0)),
                     attrs=out, tris=tris.reshape(-1, 3))
+
+
+# ---------------------------------------------------------------- Skel 0.0
+def skel_bones(data):
+    """-> [(name, parent, first_child, next, 4x4 matrix (row-vector, translation in row 3))]"""
+    n = struct.unpack_from('<H', data, 0)[0]; p = 2; out = []
+    for _ in range(n):
+        k = struct.unpack_from('<i', data, p)[0]; name = data[p + 4:p + 4 + k].decode('latin1'); p += 4 + k
+        par, fc, nx = struct.unpack_from('<hhh', data, p); p += 6
+        m = np.array(struct.unpack_from('<16f', data, p), np.float32).reshape(4, 4); p += 64
+        out.append((name, par, fc, nx, m))
+    return out, data[p:]
+
+
+def skel_build(bones, tail=b''):
+    w = W(); w('H', len(bones))
+    for name, par, fc, nx, m in bones:
+        e = name.encode('latin1'); w('i', len(e)); w.b += e; w('hhh', par, fc, nx); w.b += np.asarray(m, '<f4').tobytes()
+    return bytes(w.b) + tail
+
+
+def skel_set(data, name, matrix):
+    bones, tail = skel_bones(data)
+    bones = [(n, p, f, x, (np.asarray(matrix, np.float32) if n == name else m)) for n, p, f, x, m in bones]
+    return skel_build(bones, tail)

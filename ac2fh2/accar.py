@@ -29,17 +29,19 @@ class ACCar:
     materials: list
     data: dict                # physics files: name -> text
     skins: dict = field(default_factory=dict)   # skin -> {file: path}
+    nodes: dict = field(default_factory=dict)   # dummy node name -> world 4x4 (row-vector convention, FH2 axes)
 
 
-def _flatten(node, parent=np.eye(4, dtype=np.float32), path=''):
+def _flatten(node, parent=np.eye(4, dtype=np.float32), path='', nodes=None):
     p = f'{path}/{node.name}' if path else node.name
     if node.kind == 1:
         m = np.array(node.matrix, np.float32).reshape(4, 4)   # row-vector convention (v * M)
         parent = m @ parent
+        if nodes is not None: nodes[node.name] = parent
     if node.kind in (2, 3) and node.verts is not None and len(node.indices):
         yield node, parent, p
     for c in node.children:
-        yield from _flatten(c, parent, p)
+        yield from _flatten(c, parent, p, nodes)
 
 
 def _handedness(pos, nrm, uv, tan, tris):
@@ -72,8 +74,8 @@ def load(folder, kn5_name=None, fh2_axes=True):
         cands = [f for f in os.listdir(folder) if f.lower().endswith('.kn5') and 'collider' not in f.lower()]
         kn5_path = os.path.join(folder, max(cands, key=lambda f: os.path.getsize(os.path.join(folder, f))))
     _ver, textures, mats, root = kn5.read(kn5_path)
-    meshes = []
-    for node, M, p in _flatten(root):
+    meshes, nodes = [], {}
+    for node, M, p in _flatten(root, nodes=nodes):
         v = node.verts
         pos = np.c_[v[:, 0:3], np.ones(len(v))] @ M
         R = M[:3, :3]
@@ -104,4 +106,7 @@ def load(folder, kn5_name=None, fh2_axes=True):
             sp = os.path.join(sdir, s)
             if os.path.isdir(sp):
                 skins[s] = {f.lower(): os.path.join(sp, f) for f in os.listdir(sp)}
-    return ACCar(folder, car_id, meshes, textures, mats, data, skins)
+    if fh2_axes:   # mirror node frames too: S M S keeps them proper rotations
+        S = np.diag([-1, 1, 1, 1]).astype(np.float32)
+        nodes = {k: S @ v @ S for k, v in nodes.items()}
+    return ACCar(folder, car_id, meshes, textures, mats, data, skins, nodes)

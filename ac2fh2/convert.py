@@ -18,12 +18,12 @@ from dataclasses import dataclass, field
 import numpy as np
 from PIL import Image
 
-from . import accar, database, swatchbin
+from . import accar, database, physics, swatchbin
 from .bundle import Bundle, Blob, Meta
 from .carbin import AOMap, CarScene
 from .library import KINDS, DIFFUSE_PARAMS, ALPHA_PARAMS, TemplateLibrary, classify, car_relative
 from .material import MaterialInstance, T_TEX, name_hash
-from .modelbin import ModelStats
+from .modelbin import ModelStats, skel_bones, skel_set
 from .writer import MeshIn, build_model
 
 WHEELS = ('LF', 'RF', 'LR', 'RR')
@@ -43,6 +43,7 @@ class Settings:
     model_donor: str = None         # media name; auto when None
     physics_donor: int = None       # car id; auto when None
     max_texture: int = 2048
+    price: int = None               # override the predicted price
     material_overrides: dict = field(default_factory=dict)   # AC material -> kind
     log: object = print
 
@@ -59,6 +60,10 @@ class ModelDonor:
         self.car_id = self.scene.ordinal
         wheel = [m for p in self.scene.parts if p.part_type == 43 for m in p.models]
         self.wheels = {m.bone_name[-2:]: np.array(m.matrix[12:15]) for m in wheel}
+        names = {n.lower(): n for n in self.zip.namelist()}
+        self.locators_xml = self.zip.read(names['locators.xml']).decode('utf-8', 'replace') if 'locators.xml' in names else ''
+        m = re.search(r'carLocator_steeringWheel"/>\s*<SceneTransform[^/]*value\._41="([-0-9.]+)"', self.locators_xml)
+        self.steer_x = float(m.group(1)) if m else 0.0
 
     def wheel_layout(self):
         w = self.wheels
@@ -77,12 +82,20 @@ def ac_wheel_centres(car):
     return c
 
 
+def ac_steer_x(car):
+    m = car.nodes.get('STEER_HR')
+    return float(m[3, 0]) if m is not None else 0.0
+
+
 def choose_model_donor(car, donors):
+    """closest wheel layout; strongly prefer the same steering side (the driver animations come with the donor)"""
     ac = ac_wheel_centres(car)
     wb, tf, tr = ac['LF'][2] - ac['LR'][2], ac['RF'][0] - ac['LF'][0], ac['RR'][0] - ac['LR'][0]
+    side = np.sign(ac_steer_x(car))
     def cost(d):
         l = d.wheel_layout()
-        return abs(np.log(l['wb'] / wb)) + abs(np.log(l['tf'] / tf)) + abs(np.log(l['tr'] / tr))
+        c = abs(np.log(l['wb'] / wb)) + abs(np.log(l['tf'] / tf)) + abs(np.log(l['tr'] / tr))
+        return c + (0.12 if side and np.sign(d.steer_x) != side else 0)
     return min(donors, key=cost)
 
 
@@ -108,15 +121,30 @@ def ac_ini(text):
     return out
 
 
-def choose_physics_donor(db_path, brand, year, drive, mass_kg):
+def choose_identity_donor(db_path, brand, year):
+    """same brand, closest year: where make, Autoshow group and factory colours come from"""
     import sqlite3
     db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-    rows = db.execute('select Id, MediaName, Year, DriveTypeID, CurbWeight from Data_Car where IsDrivable=1').fetchall()
+    prefix = (brand or '')[:3].upper()
+    rows = [r for r in db.execute('select Id, MediaName, Year from Data_Car where IsDrivable=1')
+            if r[1].upper().startswith(prefix + '_')]
+    return min(rows, key=lambda r: abs((r[2] or year) - year)) if rows else None
+
+
+def choose_physics_donor(db_path, brand, year, drive, mass_kg, kw=None, turbo=None, placement=1):
+    """closest real car by drive type, engine position, aspiration, power and weight (any make)"""
+    import sqlite3
+    db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    rows = db.execute('''select c.Id, c.MediaName, c.Year, c.DriveTypeID, c.CurbWeight, c.SimPeakPower, e.AspirationID_Stock
+        from Data_Car c join List_UpgradeEngine u on u.Ordinal=c.Id and u.IsStock=1 join Data_Engine e on e.EngineID=u.EngineID
+        where c.IsDrivable=1 and c.EnginePlacementID=?''', (placement,)).fetchall()
     prefix = (brand or '')[:3].upper()
     def cost(r):
-        c = 0 if r[1].upper().startswith(prefix + '_') else 5
-        c += abs((r[2] or year) - year) / 10 + (0 if r[3] == drive else 3)
+        c = 0 if r[1].upper().startswith(prefix + '_') else 0.3
+        c += abs((r[2] or year) - year) / 25 + (0 if r[3] == drive else 3)
         c += abs(r[4] * 100 - mass_kg) / 500 if mass_kg else 0
+        if kw: c += abs(np.log(max(r[5], 1) / 10 / kw)) * 2
+        if turbo is not None: c += 0 if (r[6] > 1) == turbo else 2
         return c
     return min(rows, key=cost)
 
@@ -260,10 +288,7 @@ def convert(s: Settings):
             ui = {}
     brand = ui.get('brand', '') or 'AC'
     year = s.year or int(ui.get('year') or 2000)
-    ini = ac_ini(car.data.get('car.ini', ''))
-    drv = ac_ini(car.data.get('drivetrain.ini', '')).get('TRACTION', {}).get('TYPE', 'RWD').upper()
-    drive = {'FWD': 1, 'RWD': 2, 'AWD': 3, 'AWD2': 3}.get(drv, 2)
-    mass = float(ini.get('BASIC', {}).get('TOTALMASS', '0') or 0) - 75
+    ph = physics.read(car)
     model_name = s.name or re.sub(rf'^{re.escape(brand)}\s*', '', ui.get('name', car.car_id)).strip() or car.car_id
     short = s.short or f"{brand} {model_name.split()[0]} '{year % 100:02d}"
     skin = s.skin or (sorted(car.skins)[0] if car.skins else None)
@@ -276,9 +301,15 @@ def convert(s: Settings):
     if s.physics_donor:
         phys_id = s.physics_donor
     else:
-        r = choose_physics_donor(s.gamedb, brand, year, drive, mass)
+        tags = ' '.join(ui.get('tags', [])).lower()
+        placement = 2 if 'mid' in tags else 3 if 'rear-engine' in tags or 'rear engine' in tags else 1
+        r = choose_physics_donor(s.gamedb, brand, year, ph.drive, ph.mass, ph.peak_kw, ph.boost > 0, placement)
         phys_id = r[0]
         log(f'  physics donor: {r[1]} (car {r[0]})')
+    ident = choose_identity_donor(s.gamedb, brand, year)
+    ident_id = ident[0] if ident else None
+    if ident: log(f'  brand / Autoshow group from: {ident[1]} (car {ident[0]})')
+    else: log(f'  ! no {brand} cars in the game: make comes from the physics donor')
     log(f'  model donor:   {donor.media} (car {donor.car_id})')
     media = media_name_for(brand[:3].upper(), model_name, year, len(donor.media))
     log(f'  new car: id {s.car_id}, media {media}')
@@ -295,6 +326,13 @@ def convert(s: Settings):
     black = bank.flat('black', (0, 0, 0))
 
     keep = [m for m in car.meshes if not re.search(r'/(WHEEL|SUSP|HUB)_(LF|RF|LR|RR)\b', m.path)]
+    # steering wheel: AC STEER_HR pivot -> the donor's spindle bone (so it turns with the driver's hands)
+    spindle = None
+    if 'STEER_HR' in car.nodes:
+        A = car.nodes['STEER_HR']
+        col = A[2, :3] * scale; col /= np.linalg.norm(col)
+        if col[2] < 0: col = -col
+        spindle = (A[3, :3] * scale + offset, col)
     groups = {}
     for m in keep:
         kind = s.material_overrides.get(m.material.name) or classify(m.material).kind
@@ -303,6 +341,22 @@ def convert(s: Settings):
         groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
 
     mats, indices, meshes_in, tref = [], [], [], set()
+    entries = {n.lower(): n for n in donor.zip.namelist()}
+    skel_entry = _rel(donor.scene.skeleton, donor.media)
+    skel_data = Bundle.parse(donor.zip.read(entries[skel_entry])).first('Skel').data
+    bones, _ = skel_bones(skel_data)
+    bone_names = [b[0] for b in bones]
+    spindle_index = bone_names.index('boneSteeringWheelSpindle') if 'boneSteeringWheelSpindle' in bone_names else 1
+    if spindle is not None and 'boneSteeringWheelSpindle' in bone_names:
+        D = bones[spindle_index][4].copy()
+        a, b = D[0, :3] / np.linalg.norm(D[0, :3]), spindle[1]
+        v, c = np.cross(a, b), float(np.dot(a, b))
+        K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        Rm = np.eye(3) + K + K @ K / (1 + c)          # column-vector rotation taking a to b
+        D[:3, :3] = D[:3, :3] @ Rm.T                  # rotate each bone axis (rows)
+        D[3, :3] = spindle[0]
+        skel_data = skel_set(skel_data, 'boneSteeringWheelSpindle', D)
+        log(f'  steering wheel: pivot {np.round(spindle[0], 3).tolist()}, turns with the driver')
     for i, (mname, (kind, acmat, ms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         mi = lib.instance(kind)
         mi.name = mname
@@ -321,8 +375,9 @@ def convert(s: Settings):
         mats.append(mi.to_blob())
         indices.append((mname, KINDS[kind][1]))
         for m in ms:
+            bone = spindle_index if (spindle is not None and '/STEER_HR' in m.path) else 1
             meshes_in.append(MeshIn(f'{m.name}_LODS0', i, m.pos * scale + offset, m.nrm, m.uv, m.tan, m.tris,
-                                    transparent=kind in ('glass', 'textured_alpha')))
+                                    transparent=kind in ('glass', 'textured_alpha'), bone=bone))
     log(f'  {len(meshes_in)} meshes in {len(mats)} materials, {len(bank.files)} textures')
 
     # car scene: keep body record (re-targeted), brakes + wheels; upgrade parts -> empty model
@@ -331,8 +386,9 @@ def convert(s: Settings):
                      if m.path.lower().endswith('\\platform\\body_a.modelbin')), None) \
         or max((m for p in sc.parts if p.part_type == 2 for m in p.models), key=lambda m: dict(m.material_indices).get('carpaint', 0))
     body_entry = _rel(body_rec.path, donor.media)
-    entries = {n.lower(): n for n in donor.zip.namelist()}
     skel = Bundle.parse(donor.zip.read(entries[body_entry])).first('Skel')
+    if spindle is not None and 'boneSteeringWheelSpindle' in [b[0] for b in skel_bones(skel.data)[0]]:
+        skel.data = skel_set(skel.data, 'boneSteeringWheelSpindle', skel_bones(skel_data)[0][spindle_index][4])
     body_data = build_model(meshes_in, mats, skel, tref)
     empty_mi = lib.instance('black_plastic'); empty_mi.name = 'empty'
     empty = build_model([MeshIn('empty_LODS0', 0, np.zeros((3, 3), np.float32), np.tile([0, 1, 0], (3, 1)).astype(np.float32),
@@ -342,7 +398,9 @@ def convert(s: Settings):
     gpath = lambda rel: f'game:\\media\\cars\\{new.lower()}\\' + rel.replace('/', '\\')
     body_rec.path = gpath(body_entry)
     body_rec.material_indices = indices
-    body_rec.ao_maps = [AOMap.none()]
+    ao_path = bank.add(('ao_white', 'AO'), Image.new('RGBA', (256, 256), (255, 255, 255, 255)), srgb=False, kind='AO')[0]
+    ao_data = body_rec.ao_maps[0].data if body_rec.ao_maps else AOMap.none().data
+    body_rec.ao_maps = [AOMap(3, ao_path, ao_data)]
     for p in sc.parts:
         if p.part_type == 2:
             p.models = [body_rec]
@@ -380,6 +438,17 @@ def convert(s: Settings):
             data = body_data
         elif low == donor.carbin_name.lower():
             data = sc.build()
+        elif low == skel_entry:
+            sk = Bundle.parse(data); sk.first('Skel').data = skel_data; data = _retarget_modelbin(sk.build(), old, new)
+        elif low == 'locators.xml' and spindle is not None:
+            txt = data.decode('utf-8', 'replace')
+            def put(mm):
+                t = mm.group(0)
+                for k, v in zip(('41', '42', '43'), spindle[0]):
+                    t = re.sub(rf'value\._{k}="[-0-9.e]+"', f'value._{k}="{v:.6f}"', t)
+                return t
+            txt = re.sub(r'carLocator_steeringWheel"/>\s*<SceneTransform[^/]*/>', put, txt)
+            data = _retarget_bytes(txt.encode('utf-8'), old, new)
         elif low.endswith('.modelbin'):
             data = _retarget_modelbin(data, old, new)
         elif not low.endswith('.swatchbin'):
@@ -398,8 +467,11 @@ def convert(s: Settings):
             z.writestr(n, files[n])
     log(f'  wrote {zpath} ({os.path.getsize(zpath) / 1e6:.1f} MB, {len(files)} files)')
 
-    nc = database.NewCar(s.car_id, new, model_name, short, year, donor.car_id, phys_id)
+    nc = database.NewCar(s.car_id, new, model_name, short, year, donor.car_id, phys_id, ident_id)
     doc, strings = database.build(s.gamedb, nc)
+    physics.apply(doc, s.gamedb, s.car_id, ph, log)
+    stats = physics.predict_stats(doc, s.gamedb, log)
+    if s.price: doc['tables']['Data_Car']['insert'][0]['BaseCost'] = int(s.price)
     n, bad = database.verify(s.gamedb, doc)
     log(f'  database: {n} rows, checked against your gamedb ({"OK" if not bad else bad})')
     json.dump(doc, open(os.path.join(root, 'database.json'), 'w'), indent=2)

@@ -46,6 +46,8 @@ def pow2_size(w, h, max_size=4096):
 def encode(img: Image.Image, srgb=True, guid: uuid.UUID = None, max_size=4096, mips=True) -> bytes:
     img = img.convert('RGBA')
     w, h = pow2_size(*img.size, max_size=max_size)
+    if mips:   # small mipped textures use a layout we have not verified: keep them >= 256 x 128
+        w, h = max(w, 256), max(h, 128)
     if (w, h) != img.size:
         img = img.resize((w, h), Image.LANCZOS)
     levels = _mips(img) if mips else [img]
