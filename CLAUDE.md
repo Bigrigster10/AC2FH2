@@ -4,12 +4,21 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.3 sent for testing)
+## Status (v0.4 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
 - v0.3: 22B RHD donor (driver side), wheels moved sideways to AC track (body no longer stretched in x),
   AC rims converted, bodykit upgrades reduced to stock only. NOT yet confirmed in game.
+- v0.3 tested: loads (after selling v0.1 car), driver side CORRECT, engine sound works. Still black (every model we
+  write: body, glass, rims, steering wheel; donor brakes render fine), steering wheel flew out when turning, rims
+  oversized/sticking out and vanish at speed, car jitters a bit while driving, user finds it too strong/expensive
+  (AC car really is a 674 bhp RWD tune: ui_car.json).
+- v0.4: VLay flags fixed (were 0; TEXCOORDn=1<<n, TANGENTn=1<<(n+5) -> 111) = prime suspect for black;
+  steering meshes stored in bone space (vertices local to boneSteeringWheelSpindle, world = local @ D);
+  rim fitted by its own extents (AC rim mesh drawn 21" vs 18" in tyres.ini; RIM_BLUR excluded).
+- Open: rims vanish at speed (donor wheel has blurRim/blurLip meshes, lod_flags 2, bucket 28, 'wheel_blur'
+  material; ours has none); jitter; our hp 586 vs ui 674 (turbo model).
 - Next: confirm black body fixed; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).

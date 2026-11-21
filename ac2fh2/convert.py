@@ -125,37 +125,41 @@ def wheel_shifts(car, donor, ph):
 
 
 def build_wheel(car, ph, lib, bank, skel, overrides, log):
-    """AC WHEEL_LF rim -> FH2 unit wheel (x: 0 outer face .. 1 tyre width inward, radius 0.14 = rim radius)"""
+    """AC WHEEL_LF rim -> FH2 unit wheel: x 0 (outer face) .. 1 (inner edge of the barrel), radius 0.14 = the rim
+    radius the game uses for the stock rim size. The game draws its own tyre from the database size, so the AC rim is
+    fitted by its OWN extents (AC rim meshes are often drawn bigger than the rim size in tyres.ini, with a thinner
+    tyre around them)."""
     W = car.nodes.get('WHEEL_LF')
     ms = [m for m in car.meshes if '/WHEEL_LF' in m.path]
     if W is None or not ms:
         return None
     c = W[3, :3]
-    w = ph.tyres['F'][0] / 1000
-    rim_r = ph.tyres['F'][2] * 0.0254 / 2
-    k = 0.14 / rim_r
     groups = {}
     for m in ms:
         kind = overrides.get(m.material.name) or classify(m.material).kind
-        if kind == 'skip' or m.material.shader in ('ksTyres', 'ksBrakeDisc'):
+        if kind == 'skip' or m.material.shader in ('ksTyres', 'ksBrakeDisc') or '/RIM_BLUR' in m.path.upper():
             continue
         groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
     if not groups:
         return None
-    sc = np.array([1 / w, k, k], np.float32)
+    allp = np.concatenate([m.pos for g in groups.values() for m in g[2]])
+    x_out, x_in = float(allp[:, 0].min()), float(allp[:, 0].max())     # left wheel: outer face is -x
+    r_vis = float(np.hypot(allp[:, 1] - c[1], allp[:, 2] - c[2]).max())
+    k = 0.14 / r_vis
+    sc = np.array([1 / (x_in - x_out), k, k], np.float32)
     mats, idx, meshes_in = [], [], []
     for i, (name, (kind, acmat, gms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         mi = lib.instance(kind); mi.name = name
         _fill_textures(mi, kind, acmat, bank)
         mats.append(mi.to_blob()); idx.append((name, 0))
         for m in gms:
-            pos = (m.pos - c) * sc + np.array([0.5, 0, 0], np.float32)   # left wheel: outer face (-x) -> model x 0
+            pos = (m.pos - np.array([x_out, c[1], c[2]], np.float32)) * sc
             nrm = m.nrm / sc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
             tan = m.tan.copy(); tan[:, :3] *= sc; tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
-            tris = m.tris
             meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
-                                    tan.astype(np.float32), tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
-    log(f'  rims: {len(meshes_in)} meshes from the AC wheel, {ph.tyres["F"][2]}" rim')
+                                    tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
+    log(f'  rims: {len(meshes_in)} meshes from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across, '
+        f'{(x_in - x_out) * 100:.1f} cm deep), fitted to the {ph.tyres["F"][2]}" rim size')
     return build_model(meshes_in, mats, skel), idx
 
 
@@ -427,8 +431,17 @@ def convert(s: Settings):
         mats.append(mi.to_blob())
         indices.append((mname, KINDS[kind][1]))
         for m in ms:
-            bone = spindle_index if (spindle is not None and '/STEER_HR' in m.path) else 1
-            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, m.pos * scale + offset, m.nrm, m.uv, m.tan, m.tris,
+            pos, nrm, tan = m.pos * scale + offset, m.nrm, m.tan
+            bone = 1
+            if spindle is not None and '/STEER_HR' in m.path:
+                # meshes on an animated bone are stored in that bone's space (the game applies the bone matrix;
+                # the donor's own steering wheel sits within a few cm of 0,0,0). Row vectors: world = local @ D
+                bone = spindle_index
+                Dinv = np.linalg.inv(skel_bones(skel_data)[0][spindle_index][4].astype(np.float64))
+                pos = (np.c_[pos, np.ones(len(pos))] @ Dinv)[:, :3].astype(np.float32)
+                nrm = (nrm @ Dinv[:3, :3]).astype(np.float32)
+                tan = np.c_[tan[:, :3] @ Dinv[:3, :3], tan[:, 3:]].astype(np.float32)
+            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos, nrm, m.uv, tan, m.tris,
                                     transparent=kind in ('glass', 'textured_alpha'), bone=bone))
     log(f'  {len(meshes_in)} meshes in {len(mats)} materials, {len(bank.files)} textures')
 

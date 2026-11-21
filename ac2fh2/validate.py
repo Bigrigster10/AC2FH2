@@ -44,6 +44,10 @@ def validate(mod_root, gamedb=None, log=print):
                 problems.append(f'model missing from zip: {path}')
             continue
         m = Model.load(z.read(e)); models += 1
+        from .writer import layout_flags
+        for li, lay in m.layouts.items():
+            if lay.flags != layout_flags(lay.names, lay.elems):
+                problems.append(f'{e}: vertex layout {li} flags {lay.flags} (should be {layout_flags(lay.names, lay.elems)})')
         for bm in m.meshes:
             g = m.geometry(bm); meshes += 1
             if g['pos'] is not None and len(g['tris']) and g['tris'].max() >= len(g['pos']):

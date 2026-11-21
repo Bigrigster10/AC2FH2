@@ -61,13 +61,23 @@ def _acmr(tris, cache=32):
     return miss / max(len(tris), 1)
 
 
+def layout_flags(names, elems):
+    """VLay flags = which optional streams exist (verified on every stock model):
+    TEXCOORDn -> 1 << n, TANGENTn -> 1 << (n + 5). With 0 the shaders treat the mesh as having no UVs/tangents."""
+    f = 0
+    for e in elems:
+        if names[e[0]] == 'TEXCOORD': f |= 1 << e[1]
+        elif names[e[0]] == 'TANGENT': f |= 1 << (e[1] + 5)
+    return f
+
+
 def build_layouts():
     names = ['POSITION', 'NORMAL', 'TEXCOORD', 'TANGENT']
     el = [(0, 0, 0, 0, R32G32B32_FLOAT, -1, 0),
           (1, 0, 1, 0, R16G16B16A16_FLOAT, -1, 0)]
     el += [(2, i, 1, 0, R16G16_UNORM, -1, 0) for i in range(4)]
     el += [(3, i, 1, 0, R16G16B16A16_FLOAT, -1, 0) for i in range(2)]
-    full = Layout(names, el, [PACKED[e[4]] for e in el], 0)
+    full = Layout(names, el, [PACKED[e[4]] for e in el], layout_flags(names, el))
     pos_only = Layout(['POSITION'], [el[0]], [PACKED[R32G32B32_FLOAT]], 0)
     return full, pos_only
 
