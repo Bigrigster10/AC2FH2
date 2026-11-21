@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.5 sent for testing)
+## Status (v0.6 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -24,7 +24,13 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 - v0.5: every mesh valid at all 6 LODs (mesh lod_flags 0x7F, Modl lod_min 5 / flags 127; game uses LOD1+ for wheels
   while driving); ManufacturerColors.bin generated from AC skins -> nearest _library paint (colors.py, format verified
   byte-exact) + matching Combo_Colors; thumbnails rendered on white by thumbnail.py (software renderer).
-- Next: confirm rims/paints/tiles in game; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.5 tested: manufacturer paints WORK (6 colours), upgrades work. Left: rims wrong even parked, special paints
+  (camo/wood) stretched, thumbnail almost a black silhouette.
+- v0.6: ROOT CAUSE rims = 3 of 4 wheel carbin records kept the donor's material_indices (dict keyed by shared model
+  path) -> fixed + validate checks every record's material names vs its model. Special paints use TEXCOORD1
+  (stock: even unwrap ~2.2 repeats/m, spread 1.3) -> writer.pattern_uv box projection for paint meshes.
+  Thumbnail: studio reflections (fresnel env) + brighter exposure.
+- Next: confirm rims/patterns/tile in game; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

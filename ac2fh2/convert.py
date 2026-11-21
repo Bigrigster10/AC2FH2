@@ -24,7 +24,7 @@ from .carbin import AOMap, CarScene
 from .library import KINDS, DIFFUSE_PARAMS, ALPHA_PARAMS, TemplateLibrary, classify, car_relative
 from .material import MaterialInstance, T_TEX, name_hash
 from .modelbin import ModelStats, skel_bones, skel_set
-from .writer import MeshIn, build_model
+from .writer import pattern_uv, MeshIn, build_model
 
 WHEELS = ('LF', 'RF', 'LR', 'RR')
 
@@ -448,8 +448,11 @@ def convert(s: Settings):
                 pos = (np.c_[pos, np.ones(len(pos))] @ Dinv)[:, :3].astype(np.float32)
                 nrm = (nrm @ Dinv[:3, :3]).astype(np.float32)
                 tan = np.c_[tan[:, :3] @ Dinv[:3, :3], tan[:, 3:]].astype(np.float32)
-            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos, nrm, m.uv, tan, m.tris,
-                                    transparent=kind in ('glass', 'textured_alpha'), bone=bone))
+            uv, tris, uv1 = m.uv, m.tris, None
+            if kind == 'paint':       # special paints (camo, wood...) tile over TEXCOORD1 at an even density
+                pos, nrm, uv, tan, tris, uv1 = pattern_uv(pos, nrm, uv, tan, tris)
+            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos, nrm, uv, tan, tris,
+                                    transparent=kind in ('glass', 'textured_alpha'), bone=bone, uv1=uv1))
     log(f'  {len(meshes_in)} meshes in {len(mats)} materials, {len(bank.files)} textures')
 
     # car scene: keep body record (re-targeted), brakes + wheels; upgrade parts -> empty model
@@ -495,8 +498,8 @@ def convert(s: Settings):
             corner = m.bone_name[-2:].upper()
             if corner in shifts:
                 M = np.frombuffer(m.transform, '<f4').copy(); M[12] += shifts[corner]; m.transform = M.tobytes()
-            if p.part_type == 43:
-                wheel_files[_rel(m.path, donor.media)] = m
+            if p.part_type == 43:     # all four corners usually share one model file: keep every record
+                wheel_files.setdefault(_rel(m.path, donor.media), []).append(m)
     log(f'  wheels moved sideways by {", ".join(f"{k} {v * 100:+.1f} cm" for k, v in shifts.items())}')
     rim = None
     if wheel_files:
@@ -504,8 +507,9 @@ def convert(s: Settings):
         wskel = Bundle.parse(donor.zip.read(entries[wentry])).first('Skel')
         rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log)
         if rim:
-            for m in wheel_files.values():
-                m.material_indices = rim[1]; m.ao_maps = [AOMap(3, ao_path, ao_data)]
+            for recs in wheel_files.values():
+                for m in recs:
+                    m.material_indices = rim[1]; m.ao_maps = [AOMap(3, ao_path, ao_data)]
     sc.ordinal, sc.media_name = s.car_id, new.lower()
     sc.skeleton = _retarget_bytes(sc.skeleton.encode('latin1'), old, new).decode('latin1')
     for p in sc.parts:

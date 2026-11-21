@@ -36,6 +36,17 @@ def validate(mod_root, gamedb=None, log=print):
         for u in g.upgrades:
             if u.id not in up_db and u.id // 1000 == car['Id']:
                 problems.append(f'carbin upgrade {u.id} (part {g.part_type}) has no database row')
+    # each car-file record lists its model's materials by name: they must match the model we wrote
+    from .material import MaterialInstance
+    for rec in sc.all_models():
+        e = entry(rec.path)
+        if not e or not rec.material_indices:
+            continue
+        mm = Model.load(z.read(e))
+        have = sorted(MaterialInstance.from_blob(b).name.lower() for b in mm.materials.values() if b.data)
+        want = sorted(n.lower() for n, _ in rec.material_indices)
+        if have != want:
+            problems.append(f'{e}: car-file material list {want[:4]}... does not match the model {have[:4]}...')
     tex_ok = tex_missing = models = meshes = 0
     for path in {m.path for m in sc.all_models()} | {sc.skeleton}:
         e = entry(path)

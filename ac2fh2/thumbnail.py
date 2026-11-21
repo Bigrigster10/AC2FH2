@@ -79,12 +79,18 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=-38, pi
     n[~front] *= -1
     key = np.array([-0.4, 0.8, 0.45]); key /= np.linalg.norm(key)
     fill = np.array([0.6, 0.3, -0.2]); fill /= np.linalg.norm(fill)
-    lam = 0.42 + 0.5 * np.clip(n @ key, 0, 1) + 0.18 * np.clip(n @ fill, 0, 1)
+    lam = 0.55 + 0.5 * np.clip(n @ key, 0, 1) + 0.2 * np.clip(n @ fill, 0, 1)
     h = key + to_cam; h /= np.linalg.norm(h, axis=1, keepdims=True)
     gloss = np.isin(kinds, ['paint', 'chrome', 'glass'])
-    spec = np.where(gloss, np.clip((n * h).sum(1), 0, 1) ** 40 * 140, 0)
-    sky = np.where(gloss, np.clip(n[:, 1], 0, 1) * 30, 0)     # studio ceiling reflection
-    rgb = np.clip(C * lam[:, None] + (spec + sky)[:, None], 0, 255).astype(np.uint8)
+    spec = np.where(gloss, np.clip((n * h).sum(1), 0, 1) ** 40 * 160, 0)
+    # studio reflection: bright ceiling softboxes, mid-grey walls, darker floor; stronger at glancing angles
+    ndv = np.clip((n * to_cam).sum(1), 0, 1)
+    r = 2 * ndv[:, None] * n - to_cam                         # view vector reflected about the normal
+    env = np.where(r[:, 1] > 0.35, 240, np.interp(r[:, 1], [-1, 0, 0.35], [70, 150, 200]))
+    F = np.select([kinds == 'chrome', kinds == 'paint', kinds == 'glass'],
+                  [0.75, 0.12 + 0.6 * (1 - ndv) ** 3, 0.08 + 0.7 * (1 - ndv) ** 3], 0.0)
+    base = C * lam[:, None]
+    rgb = np.clip(base * (1 - F)[:, None] + (env * F)[:, None] + spec[:, None], 0, 255).astype(np.uint8)
 
     img = Image.new('RGB', (W, H), (246, 246, 246))
     # soft floor gradient + contact shadow (the car's footprint projected on the ground)

@@ -33,6 +33,28 @@ class MeshIn:
     transparent: bool = False
     cast_shadow: bool = True
     bone: int = 0
+    uv1: np.ndarray = None             # TEXCOORD1 = pattern channel (special paints / flakes); default = uv
+
+
+# stock car paint: TEXCOORD1 is an even-density unwrap at ~2.2 repeats per metre (measured on stock bodies)
+PATTERN_DENSITY = 2.2
+
+
+def pattern_uv(pos, nrm, uv, tan, tris, density=PATTERN_DENSITY):
+    """box projection for TEXCOORD1: each triangle uses the axis its face points along; vertices are split
+    where neighbouring triangles use different axes. -> pos, nrm, uv, tan, tris, uv1"""
+    P = pos[tris]
+    fn = np.cross(P[:, 1] - P[:, 0], P[:, 2] - P[:, 0])
+    axis = np.argmax(np.abs(fn), 1)                              # 0 side, 1 top/bottom, 2 front/back
+    key = tris * 3 + axis[:, None]
+    uniq, inv = np.unique(key.ravel(), return_inverse=True)
+    src, ax = uniq // 3, uniq % 3
+    p = pos[src]
+    # patterns run along the car: sides (z, y), top (z, x), ends (x, y)
+    u = np.where(ax == 2, p[:, 0], p[:, 2])
+    v = np.where(ax == 1, p[:, 0], p[:, 1])
+    uv1 = (np.stack([u, -v], 1) * density).astype(np.float32)
+    return pos[src], nrm[src], uv[src], tan[src], inv.reshape(-1, 3), uv1
 
 
 def _id(i):
@@ -101,14 +123,16 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
         tris = np.asarray(mi.tris, np.int64)
         assert tris.max() < n, f'{mi.name}: index out of range'
         q, uvt = _uv_transform(np.asarray(mi.uv, np.float32))
+        q1, uvt1 = _uv_transform(np.asarray(mi.uv1, np.float32)) if mi.uv1 is not None else (q, uvt)
         nrm = np.zeros((n, 4), np.float16); nrm[:, :3] = mi.nrm
         tan = np.asarray(mi.tan, np.float16)
         rec = np.zeros(n, dtype=[('n', '<f2', 4), ('uv', '<u2', (4, 2)), ('t0', '<f2', 4), ('t1', '<f2', 4)])
-        rec['n'] = nrm; rec['uv'] = q[:, None, :]; rec['t0'] = tan; rec['t1'] = tan
+        rec['n'] = nrm; rec['uv'] = q[:, None, :]; rec['uv'][:, 1] = q1; rec['t0'] = tan; rec['t1'] = tan
         assert rec.dtype.itemsize == ATTR_STRIDE
         positions.append(np.asarray(mi.pos, '<f4')); attrs.append(rec.tobytes())
         indices.append((tris + vstart).astype('<u4').ravel())
-        uv_t = struct.pack('<4f', *uvt) * 4 + struct.pack('<4f', 0, 1, 0, 1)
+        uv_t = struct.pack('<4f', *uvt) + struct.pack('<4f', *uvt1) + struct.pack('<4f', *uvt) * 2 + \
+            struct.pack('<4f', 0, 1, 0, 1)
         bucket = (BUCKET_TRANSPARENT | BUCKET_SHADOW | BUCKET_NOT_SHADOW | BUCKET_A2C) if mi.transparent \
             else (BUCKET_OPAQUE | BUCKET_NOT_SHADOW)
         common = dict(bone=mi.bone, lod_flags=ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
