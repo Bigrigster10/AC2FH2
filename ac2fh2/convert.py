@@ -74,6 +74,8 @@ class ModelDonor:
 def ac_wheel_centres(car):
     c = {}
     for k in WHEELS:
+        if f'WHEEL_{k}' in car.nodes:
+            c[k] = car.nodes[f'WHEEL_{k}'][3, :3].copy(); continue
         ms = [m for m in car.meshes if f'/WHEEL_{k}' in m.path]
         if ms:
             p = np.concatenate([m.pos for m in ms]); c[k] = (p.min(0) + p.max(0)) / 2
@@ -92,23 +94,86 @@ def choose_model_donor(car, donors):
     ac = ac_wheel_centres(car)
     wb, tf, tr = ac['LF'][2] - ac['LR'][2], ac['RF'][0] - ac['LF'][0], ac['RR'][0] - ac['LR'][0]
     side = np.sign(ac_steer_x(car))
-    def cost(d):
+    def cost(d):   # wheels are moved sideways to fit, so track matters less than wheelbase
         l = d.wheel_layout()
-        c = abs(np.log(l['wb'] / wb)) + abs(np.log(l['tf'] / tf)) + abs(np.log(l['tr'] / tr))
+        c = abs(np.log(l['wb'] / wb)) + 0.15 * (abs(np.log(l['tf'] / tf)) + abs(np.log(l['tr'] / tr)))
         return c + (0.12 if side and np.sign(d.steer_x) != side else 0)
     return min(donors, key=cost)
 
 
 def body_fit(car, donor):
-    """per-axis scale + offset that puts the AC wheel centres on the donor's"""
+    """length scale + offset that puts the AC axles on the donor's (width is kept: the wheels move instead)"""
     ac, l = ac_wheel_centres(car), donor.wheel_layout()
     acwb = ac['LF'][2] - ac['LR'][2]
     sz = l['wb'] / acwb
-    sx = (l['tf'] + l['tr']) / ((ac['RF'][0] - ac['LF'][0]) + (ac['RR'][0] - ac['LR'][0]))
-    scale = np.array([sx, 1.0, sz], np.float32)
+    scale = np.array([1.0, 1.0, sz], np.float32)
     acy = np.mean([v[1] for v in ac.values()])
     offset = np.array([0.0, l['y'] - acy, l['zf'] - ac['LF'][2] * sz], np.float32)
     return scale, offset
+
+
+def wheel_shifts(car, donor, ph):
+    """carbin wheel transforms mark the wheel's outer face: move each to the AC wheel position"""
+    ac = ac_wheel_centres(car)
+    out = {}
+    for k in WHEELS:
+        w = (ph.tyres['F'] if k[1] == 'F' else ph.tyres['R'])[0] / 1000
+        cx = ac[k][0]
+        target = cx - w / 2 if cx < 0 else cx + w / 2
+        out[k] = target - donor.wheels[k][0]
+    return out
+
+
+def build_wheel(car, ph, lib, bank, skel, overrides, log):
+    """AC WHEEL_LF rim -> FH2 unit wheel (x: 0 outer face .. 1 tyre width inward, radius 0.14 = rim radius)"""
+    W = car.nodes.get('WHEEL_LF')
+    ms = [m for m in car.meshes if '/WHEEL_LF' in m.path]
+    if W is None or not ms:
+        return None
+    c = W[3, :3]
+    w = ph.tyres['F'][0] / 1000
+    rim_r = ph.tyres['F'][2] * 0.0254 / 2
+    k = 0.14 / rim_r
+    groups = {}
+    for m in ms:
+        kind = overrides.get(m.material.name) or classify(m.material).kind
+        if kind == 'skip' or m.material.shader in ('ksTyres', 'ksBrakeDisc'):
+            continue
+        groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
+    if not groups:
+        return None
+    sc = np.array([1 / w, k, k], np.float32)
+    mats, idx, meshes_in = [], [], []
+    for i, (name, (kind, acmat, gms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
+        mi = lib.instance(kind); mi.name = name
+        _fill_textures(mi, kind, acmat, bank)
+        mats.append(mi.to_blob()); idx.append((name, 0))
+        for m in gms:
+            pos = (m.pos - c) * sc + np.array([0.5, 0, 0], np.float32)   # left wheel: outer face (-x) -> model x 0
+            nrm = m.nrm / sc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+            tan = m.tan.copy(); tan[:, :3] *= sc; tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
+            tris = m.tris
+            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
+                                    tan.astype(np.float32), tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
+    log(f'  rims: {len(meshes_in)} meshes from the AC wheel, {ph.tyres["F"][2]}" rim')
+    return build_model(meshes_in, mats, skel), idx
+
+
+def _fill_textures(mi, kind, acmat, bank):
+    diff = bank.diffuse(acmat.textures.get('txDiffuse')) if kind.startswith('textured') else None
+    alpha = bank.alpha(acmat.textures.get('txDiffuse')) if kind == 'textured_alpha' else None
+    used = set()
+    for p in mi.params:
+        if p.type != T_TEX:
+            continue
+        if p.hash in DIFFUSE_PARAMS and diff:
+            p.value = diff
+        elif p.hash in ALPHA_PARAMS and alpha:
+            p.value = alpha
+        elif car_relative(p.value[0]):
+            p.value = bank.flat('gloss_neutral', (90, 90, 90)) if 'glos' in p.value[0].lower() else bank.flat('black', (0, 0, 0))
+        used.add(p.value[1])
+    return used
 
 
 # --------------------------------------------------------------- physics
@@ -322,8 +387,6 @@ def convert(s: Settings):
     if missing:
         raise RuntimeError(f'material templates not found in the FH2 cars given: {missing}')
     bank = TextureBank(car, skin, media, s.max_texture, log)
-    gloss = bank.flat('gloss_neutral', (90, 90, 90))
-    black = bank.flat('black', (0, 0, 0))
 
     keep = [m for m in car.meshes if not re.search(r'/(WHEEL|SUSP|HUB)_(LF|RF|LR|RR)\b', m.path)]
     # steering wheel: AC STEER_HR pivot -> the donor's spindle bone (so it turns with the driver's hands)
@@ -360,18 +423,7 @@ def convert(s: Settings):
     for i, (mname, (kind, acmat, ms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         mi = lib.instance(kind)
         mi.name = mname
-        diff = bank.diffuse(acmat.textures.get('txDiffuse')) if kind.startswith('textured') else None
-        alpha = bank.alpha(acmat.textures.get('txDiffuse')) if kind == 'textured_alpha' else None
-        for p in mi.params:
-            if p.type != T_TEX:
-                continue
-            if p.hash in DIFFUSE_PARAMS and diff:
-                p.value = diff
-            elif p.hash in ALPHA_PARAMS and alpha:
-                p.value = alpha
-            elif car_relative(p.value[0]):
-                p.value = gloss if 'glos' in p.value[0].lower() else black
-            tref.add(p.value[1])
+        tref |= _fill_textures(mi, kind, acmat, bank)
         mats.append(mi.to_blob())
         indices.append((mname, KINDS[kind][1]))
         for m in ms:
@@ -404,10 +456,36 @@ def convert(s: Settings):
     for p in sc.parts:
         if p.part_type == 2:
             p.models = [body_rec]
+    # upgrade bodykits: AC cars have none -> keep only the stock entry of each group (an empty model)
     for g in sc.groups:
+        g.upgrades = [u for u in g.upgrades if u.is_stock]
+        stock_ids = {u.id for u in g.upgrades}
+        g.models = [m for m in g.models if set(m.upgrade_ids) & stock_ids][:1]
         for m in g.models:
             m.path = gpath('scene/exterior/ac_empty.modelbin'); m.ao_maps = [AOMap.none()]
-            m.material_indices = [('empty', 0)]
+            m.material_indices = [('empty', 0)]; m.upgrade_ids = sorted(stock_ids)
+    sc.groups = [g for g in sc.groups if g.upgrades]
+    # wheels + brakes: move sideways onto the AC wheel positions; the AC rim replaces the donor's
+    shifts = wheel_shifts(car, donor, ph)
+    wheel_files = {}
+    for p in sc.parts:
+        if p.part_type not in (4, 43):
+            continue
+        for m in p.models:
+            corner = m.bone_name[-2:].upper()
+            if corner in shifts:
+                M = np.frombuffer(m.transform, '<f4').copy(); M[12] += shifts[corner]; m.transform = M.tobytes()
+            if p.part_type == 43:
+                wheel_files[_rel(m.path, donor.media)] = m
+    log(f'  wheels moved sideways by {", ".join(f"{k} {v * 100:+.1f} cm" for k, v in shifts.items())}')
+    rim = None
+    if wheel_files:
+        wentry = next(iter(wheel_files))
+        wskel = Bundle.parse(donor.zip.read(entries[wentry])).first('Skel')
+        rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log)
+        if rim:
+            for m in wheel_files.values():
+                m.material_indices = rim[1]; m.ao_maps = [AOMap(3, ao_path, ao_data)]
     sc.ordinal, sc.media_name = s.car_id, new.lower()
     sc.skeleton = _retarget_bytes(sc.skeleton.encode('latin1'), old, new).decode('latin1')
     for p in sc.parts:
@@ -436,6 +514,8 @@ def convert(s: Settings):
         data = donor.zip.read(n)
         if low == body_entry:
             data = body_data
+        elif rim and low in wheel_files:
+            data = rim[0]
         elif low == donor.carbin_name.lower():
             data = sc.build()
         elif low == skel_entry:
@@ -470,6 +550,15 @@ def convert(s: Settings):
     nc = database.NewCar(s.car_id, new, model_name, short, year, donor.car_id, phys_id, ident_id)
     doc, strings = database.build(s.gamedb, nc)
     physics.apply(doc, s.gamedb, s.car_id, ph, log)
+    bodykit = ('List_UpgradeCarBodyFrontBumper', 'List_UpgradeCarBodyRearBumper', 'List_UpgradeCarBodySideSkirt',
+               'List_UpgradeCarBodyHood', 'List_UpgradeRearWing')
+    for t in bodykit:
+        if t in doc['tables']:
+            doc['tables'][t]['insert'] = [r for r in doc['tables'][t]['insert'] if r.get('IsStock')]
+    for r in doc['tables'].get('Data_CarBody', {}).get('insert', []):   # physics track = where the wheels now are
+        wl = {k: donor.wheels[k][0] + shifts[k] for k in WHEELS}
+        r['ModelFrontTrackOuter'] = round(float(wl['RF'] - wl['LF']), 4)
+        r['ModelRearTrackOuter'] = round(float(wl['RR'] - wl['LR']), 4)
     stats = physics.predict_stats(doc, s.gamedb, log)
     if s.price: doc['tables']['Data_Car']['insert'][0]['BaseCost'] = int(s.price)
     n, bad = database.verify(s.gamedb, doc)
