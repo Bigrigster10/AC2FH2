@@ -19,7 +19,7 @@ def _look(eye, target):
     return np.stack([r, u, f])
 
 
-def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=38, pitch_deg=12):
+def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=38, pitch_deg=12, shadow=True):
     """car: accar.ACCar in FH2 axes (Y up, Z forward, -X left). paint_rgb: 0..1. texture_image(name) -> PIL or None"""
     W, H = size[0] * ss, size[1] * ss
     tris, cols, kinds = [], [], []
@@ -102,7 +102,8 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=38, pit
     ImageDraw.Draw(sh).polygon([tuple(p) for p in hull], fill=90)
     sh = sh.filter(ImageFilter.GaussianBlur(ss * 8))
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-    img.putalpha(sh)
+    if shadow:
+        img.putalpha(sh)
 
     order = np.argsort(-V[..., 2].mean(1))                  # far to near
     dr = ImageDraw.Draw(img)

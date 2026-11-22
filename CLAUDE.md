@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.7 sent for testing)
+## Status (v0.8 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -37,7 +37,12 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
   drawn at r 0.14 m and 1 m deep -> behind the 0.143 m rotor. Now built at real size (radius = DB rim radius,
   depth = tyre width); separate _rear model when rear tyres differ. Rim-size upgrades won't resize it (no morphs).
   Thumbnail: RGBA transparent, faint contact shadow, camera front-RIGHT (stock tiles have the nose pointing left).
-- Next: confirm rims + tile in game; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.7 tested: RIMS VISIBLE, right place, 5-spoke; big tile OK. Left: rims dark (not gold) except lip, look small
+  in the thick FH2 tyre, invisible at speed; small tile shadow looks bad.
+- v0.8: diffuse textures exported with alpha 255 (AC diffuse alpha = spec mask; wheel_lod2 alpha was 0 everywhere
+  -> FH2 drew it black); fit_rim_size: biggest rim <= AC drawn size keeping overall tyre diameter with aspect >= 30
+  (Subaru: 235/35R18 -> 235/30R19); small tile without shadow. At-speed invisibility may have been black-on-black.
+- Next: confirm rims gold/size/at speed; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

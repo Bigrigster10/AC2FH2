@@ -124,6 +124,29 @@ def wheel_shifts(car, donor, ph):
     return out
 
 
+def fit_rim_size(car, ph, log, min_aspect=29.5):
+    """AC rims are often drawn bigger than the tyres.ini rim (thin tyre around them). FH2 draws its own tyre from the
+    database size, so use the biggest rim (<= the drawn size) that keeps the overall wheel diameter -- i.e. the
+    physics -- the same while the profile stays >= FH2's thinnest (30%)."""
+    for axle, corner in (('F', 'LF'), ('R', 'LR')):
+        W = car.nodes.get(f'WHEEL_{corner}')
+        ms = [m for m in car.meshes if f'/WHEEL_{corner}' in m.path and '/RIM_BLUR' not in m.path.upper()
+              and m.material.shader not in ('ksTyres', 'ksBrakeDisc') and classify(m.material).kind != 'skip']
+        if W is None or not ms:
+            continue
+        c = W[3, :3]; P = np.concatenate([m.pos for m in ms])
+        drawn = 2 * float(np.hypot(P[:, 1] - c[1], P[:, 2] - c[2]).max()) / 0.0254
+        w_mm, aspect, rim = ph.tyres[axle]
+        outer = rim * 0.0127 + w_mm / 1000 * aspect / 100            # tyre radius, m
+        for inch in range(int(drawn), int(rim), -1):
+            a = (outer - inch * 0.0127) / (w_mm / 1000) * 100
+            if a >= min_aspect:
+                ph.tyres[axle] = (w_mm, int(round(a)), inch)
+                log(f'  rims ({axle}): AC draws {drawn:.1f}" rims -> {w_mm}/{round(a)} R{inch} (same overall size as '
+                    f'{w_mm}/{aspect} R{rim})')
+                break
+
+
 def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
     """AC rim -> FH2 wheel model at REAL size (metres): x 0 = outer face .. tyre width inward, radius = the
     database rim radius. Stock FH2 wheels are a unit rim (r 0.14, x 0..1) plus morph targets the game blends to the
@@ -269,6 +292,9 @@ class TextureBank:
         img = self.image(name) if name else None
         if img is None:
             return None
+        # AC's diffuse alpha is a reflection/specular mask (opacity has its own OPAC map here); FH2's materials read
+        # diffuse alpha as coverage, so an AC alpha of 0 (common on rims) turned the texture black -> export opaque
+        img = img.copy(); img.putalpha(255)
         return self.add((name, 'DIFF'), img)
 
     def alpha(self, name):
@@ -361,6 +387,7 @@ def convert(s: Settings):
     brand = ui.get('brand', '') or 'AC'
     year = s.year or int(ui.get('year') or 2000)
     ph = physics.read(car)
+    fit_rim_size(car, ph, log)
     model_name = s.name or re.sub(rf'^{re.escape(brand)}\s*', '', ui.get('name', car.car_id)).strip() or car.car_id
     short = s.short or f"{brand} {model_name.split()[0]} '{year % 100:02d}"
     skin = s.skin or (sorted(car.skins)[0] if car.skins else None)
@@ -615,7 +642,7 @@ def convert(s: Settings):
     paint_rgb = paints[0][3] if paints else (0.5, 0.5, 0.52)
     for suf, (w, h) in (('Big', (816, 459)), ('Small', (192, 108))):
         try:
-            img = thumbnail.render(car, paint_rgb, bank.image, size=(w, h))
+            img = thumbnail.render(car, paint_rgb, bank.image, size=(w, h), shadow=(suf == 'Big'))
         except Exception as e:                 # fall back to the AC preview photo
             log(f'  ! thumbnail render failed ({e}); using the AC preview')
             prev = car.skins.get(skin, {}).get('preview.jpg') if skin else None
