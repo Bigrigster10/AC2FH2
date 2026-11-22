@@ -150,12 +150,13 @@ def wheel_shifts(car, donor, ph):
     return out
 
 
-def fit_rim_size(car, ph, log, min_aspect=18, rim_drop=1, tyre_scale=0.975):
+def fit_rim_size(car, ph, log, target_aspect=37, tyre_scale=0.975):
     """AC rims are often drawn bigger than the tyres.ini rim (thin tyre around them). FH2 draws its own tyre from the
     database size, so use the biggest rim (<= the drawn size) that keeps the overall wheel diameter -- i.e. the
     physics -- the same while the profile stays >= FH2's thinnest (30%).
-    In game the full drawn size looked too big with the FH2 tyre: rim_drop inches smaller and the overall tyre
-    tyre_scale smaller (owner's v0.11 feedback; stats/price still use the AC tyre spec)."""
+    In game a thin FH2 tyre around the full drawn rim looked wrong ("paper thin"): the owner wants a thick sidewall,
+    so pick the rim size whose profile is closest to target_aspect, overall tyre tyre_scale of the AC one
+    (owner's v0.11/v0.12 feedback; stats/price still use the AC tyre spec)."""
     ph.tyres_orig = dict(ph.tyres)
     same_spec, drawn_min = ph.tyres['F'][2] == ph.tyres['R'][2], None
     drawn_all = {}
@@ -181,13 +182,14 @@ def fit_rim_size(car, ph, log, min_aspect=18, rim_drop=1, tyre_scale=0.975):
         if same_spec and drawn_min:
             drawn = min(drawn, drawn_min)                           # same rims front and rear in AC: one size
         drawn_min = drawn
-        for inch in range(int(round(drawn)) - rim_drop, int(rim), -1):
-            a = (outer - inch * 0.0127) / (w_mm / 1000) * 100
-            if a >= min_aspect:
-                ph.tyres[axle] = (w_mm, int(round(a)), inch)
-                log(f'  rims ({axle}): AC draws {drawn:.1f}" rims -> {w_mm}/{round(a)} R{inch} (overall {tyre_scale:.1%} of '
-                    f'{w_mm}/{aspect} R{rim})')
-                break
+        asp = {i: (outer - i * 0.0127) / (w_mm / 1000) * 100 for i in range(13, int(round(drawn)) + 1)}
+        asp = {i: a for i, a in asp.items() if 25 <= a <= 70}
+        if asp:
+            inch = min(asp, key=lambda i: abs(asp[i] - target_aspect))
+            a = int(round(asp[inch]))
+            ph.tyres[axle] = (w_mm, a, inch)
+            log(f'  rims ({axle}): AC draws {drawn:.1f}" rims -> {w_mm}/{a} R{inch} (thick sidewall; overall '
+                f'{tyre_scale:.1%} of {w_mm}/{aspect} R{rim})')
 
 
 def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F', donor_wheel=None):

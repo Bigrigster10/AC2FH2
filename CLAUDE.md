@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.12 sent for testing)
+## Status (v0.13 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -62,7 +62,10 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 - v0.12: wheel outer face = AC rim's straightened outer face (AC WHEEL nodes sit ~6-8 cm inboard of the tyre centre;
   node +- half width was too deep), capped at body arch + 1 cm since camber is removed. fit_rim_size rim_drop=1",
   tyre_scale 0.975 overall -> 235/21 R20 (physics rolling radius 2.5% smaller; stats/price still on the AC spec).
-- Next: confirm v0.12 stance/size / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.12 feedback (before testing): owner realised the thin tyre is what looks wrong -> wants a MUCH thicker tyre.
+- v0.13: fit_rim_size picks the rim whose profile is closest to target_aspect 37 (overall tyre 97.5% of AC) ->
+  235/37 R17 (sidewall ~8.7 cm vs 4.9). Stance fix from v0.12 kept.
+- Next: confirm v0.13 stance/size / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).
