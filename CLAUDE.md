@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.6 sent for testing)
+## Status (v0.7 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -30,7 +30,14 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
   path) -> fixed + validate checks every record's material names vs its model. Special paints use TEXCOORD1
   (stock: even unwrap ~2.2 repeats/m, spread 1.3) -> writer.pattern_uv box projection for paint meshes.
   Thumbnail: studio reflections (fresnel env) + brighter exposure.
-- Next: confirm rims/patterns/tile in game; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.6 tested: SPECIAL PAINTS WORK. Rims still invisible (only donor rotor/caliper + gold sliver behind them);
+  tile: user wants it like stock = transparent background, car only.
+- v0.7: ROOT CAUSE rims = stock wheel meshes are a unit rim (r 0.14, x 0..1) + MORPH TARGETS (Mrph blob, MBuf,
+  morph_targets 2) that the game blends to the real rim size/width; carbin does NOT scale. Our morph-less rim was
+  drawn at r 0.14 m and 1 m deep -> behind the 0.143 m rotor. Now built at real size (radius = DB rim radius,
+  depth = tyre width); separate _rear model when rear tyres differ. Rim-size upgrades won't resize it (no morphs).
+  Thumbnail: RGBA transparent, faint contact shadow, camera front-RIGHT (stock tiles have the nose pointing left).
+- Next: confirm rims + tile in game; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).
@@ -66,7 +73,8 @@ New car ids 3000-8999; car N owns ids N and N*1000..N*1000+999. ContentId must b
 - carbin v5 (carbin.py): parts (2 body, 4 brakes, 43 wheels) + upgrade groups (9 wing, 34/35 bumpers, 36 hood,
   37 skirts, 41 cage) with upgrade ids = DB rows. material_indices = (name, flag: 1 paint, 2 secondary, 4/8/16 panels,
   128 glass). Every model needs an AO map entry (path + 27-byte data copied from donor).
-  Wheel models: unit rim, x 0 (outer face) .. 1 (inner), radius 0.14; carbin T = outer face, right side mirrored.
+  Wheel models: stock = unit rim (x 0 outer face..1, r 0.14) + morph targets to real size; carbin T = outer face (no
+  scale), right side mirrored. Ours: real-size metres, no morphs.
 - Skeleton: bone list identical in skeleton.modelbin and each model's Skel. Steering: boneSteeringWheelSpindle (X axis
   = column). Locators.xml carLocator_steeringWheel. Driver animations (scene/Drivers/*.gr2) are baked per car -> pick
   donor with same steering side.

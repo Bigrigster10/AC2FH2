@@ -124,13 +124,14 @@ def wheel_shifts(car, donor, ph):
     return out
 
 
-def build_wheel(car, ph, lib, bank, skel, overrides, log):
-    """AC WHEEL_LF rim -> FH2 unit wheel: x 0 (outer face) .. 1 (inner edge of the barrel), radius 0.14 = the rim
-    radius the game uses for the stock rim size. The game draws its own tyre from the database size, so the AC rim is
-    fitted by its OWN extents (AC rim meshes are often drawn bigger than the rim size in tyres.ini, with a thinner
-    tyre around them)."""
-    W = car.nodes.get('WHEEL_LF')
-    ms = [m for m in car.meshes if '/WHEEL_LF' in m.path]
+def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
+    """AC rim -> FH2 wheel model at REAL size (metres): x 0 = outer face .. tyre width inward, radius = the
+    database rim radius. Stock FH2 wheels are a unit rim (r 0.14, x 0..1) plus morph targets the game blends to the
+    real rim size / width; there is no scaling in the car file, so a rim without morphs must already be real size.
+    The AC rim is fitted by its OWN extents (AC rim meshes are often drawn bigger than the rim size in tyres.ini)."""
+    corner = 'LF' if axle == 'F' else 'LR'
+    W = car.nodes.get(f'WHEEL_{corner}')
+    ms = [m for m in car.meshes if f'/WHEEL_{corner}' in m.path]
     if W is None or not ms:
         return None
     c = W[3, :3]
@@ -143,10 +144,12 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log):
     if not groups:
         return None
     allp = np.concatenate([m.pos for g in groups.values() for m in g[2]])
-    x_out, x_in = float(allp[:, 0].min()), float(allp[:, 0].max())     # left wheel: outer face is -x
+    x_out, x_in = float(allp[:, 0].min()), float(allp[:, 0].max())     # left wheels: outer face is -x
     r_vis = float(np.hypot(allp[:, 1] - c[1], allp[:, 2] - c[2]).max())
-    k = 0.14 / r_vis
-    sc = np.array([1 / (x_in - x_out), k, k], np.float32)
+    width_m, _, rim_in = ph.tyres[axle]
+    R = rim_in * 0.0254 / 2
+    k = R / r_vis
+    sc = np.array([(width_m / 1000) / (x_in - x_out), k, k], np.float32)
     mats, idx, meshes_in = [], [], []
     for i, (name, (kind, acmat, gms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         mi = lib.instance(kind); mi.name = name
@@ -158,8 +161,8 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log):
             tan = m.tan.copy(); tan[:, :3] *= sc; tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
             meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
                                     tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
-    log(f'  rims: {len(meshes_in)} meshes from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across, '
-        f'{(x_in - x_out) * 100:.1f} cm deep), fitted to the {ph.tyres["F"][2]}" rim size')
+    log(f'  rims ({axle}): {len(meshes_in)} meshes from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across), '
+        f'built at {rim_in}" x {width_m} mm, real size')
     return build_model(meshes_in, mats, skel), idx
 
 
@@ -501,15 +504,22 @@ def convert(s: Settings):
             if p.part_type == 43:     # all four corners usually share one model file: keep every record
                 wheel_files.setdefault(_rel(m.path, donor.media), []).append(m)
     log(f'  wheels moved sideways by {", ".join(f"{k} {v * 100:+.1f} cm" for k, v in shifts.items())}')
-    rim = None
+    rim = rear = None
     if wheel_files:
         wentry = next(iter(wheel_files))
         wskel = Bundle.parse(donor.zip.read(entries[wentry])).first('Skel')
-        rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log)
+        rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'F')
         if rim:
-            for recs in wheel_files.values():
+            rear = None
+            if ph.tyres['R'] != ph.tyres['F']:      # different rear size: its own real-size model
+                rear = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'R')
+            for wf, recs in wheel_files.items():
                 for m in recs:
-                    m.material_indices = rim[1]; m.ao_maps = [AOMap(3, ao_path, ao_data)]
+                    use = rear if (rear and m.bone_name[-2:-1].upper() == 'R') else rim
+                    m.material_indices = use[1]; m.ao_maps = [AOMap(3, ao_path, ao_data)]
+                    if use is rear:
+                        m.path = m.path[:m.path.lower().rfind('.modelbin')] + '_rear.modelbin'
+                        rear_entry = wf[:-len('.modelbin')] + '_rear.modelbin'
     sc.ordinal, sc.media_name = s.car_id, new.lower()
     sc.skeleton = _retarget_bytes(sc.skeleton.encode('latin1'), old, new).decode('latin1')
     for p in sc.parts:
@@ -561,6 +571,8 @@ def convert(s: Settings):
             data = _retarget_bytes(data, old, new)
         files[nn] = data
     files['scene/exterior/ac_empty.modelbin'] = empty
+    if rim and rear:
+        files['/'.join(_retarget_bytes(x.encode('latin1'), old, new).decode('latin1') for x in rear_entry.split('/'))] = rear[0]
     files.update(bank.files)
 
     # output folder

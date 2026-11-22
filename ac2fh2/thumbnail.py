@@ -19,7 +19,7 @@ def _look(eye, target):
     return np.stack([r, u, f])
 
 
-def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=-38, pitch_deg=12):
+def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=38, pitch_deg=12):
     """car: accar.ACCar in FH2 axes (Y up, Z forward, -X left). paint_rgb: 0..1. texture_image(name) -> PIL or None"""
     W, H = size[0] * ss, size[1] * ss
     tris, cols, kinds = [], [], []
@@ -92,24 +92,22 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=2, yaw_deg=-38, pi
     base = C * lam[:, None]
     rgb = np.clip(base * (1 - F)[:, None] + (env * F)[:, None] + spec[:, None], 0, 255).astype(np.uint8)
 
-    img = Image.new('RGB', (W, H), (246, 246, 246))
-    # soft floor gradient + contact shadow (the car's footprint projected on the ground)
-    grad = np.linspace(246, 226, H // 2).astype(np.uint8)
-    img.paste(Image.fromarray(np.repeat(grad[:, None], W, 1)).convert('RGB'), (0, H - H // 2))
+    # transparent tile like the stock Autoshow images: the car + a faint contact shadow, no background
     G = T.reshape(-1, 3).copy(); G[:, 1] = lo[1]
     Gv = (G - eye) @ R.T
     gp = fit(np.stack([f * Gv[:, 0] / Gv[:, 2], -f * Gv[:, 1] / Gv[:, 2]], -1))
-    sh = Image.new('L', (W, H), 0)
     from scipy.spatial import ConvexHull
     hull = gp[ConvexHull(gp).vertices]
-    ImageDraw.Draw(sh).polygon([tuple(p) for p in hull], fill=150)
-    sh = sh.filter(ImageFilter.GaussianBlur(ss * 10))
-    img.paste((150, 150, 150), (0, 0), sh)
+    sh = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(sh).polygon([tuple(p) for p in hull], fill=90)
+    sh = sh.filter(ImageFilter.GaussianBlur(ss * 8))
+    img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    img.putalpha(sh)
 
     order = np.argsort(-V[..., 2].mean(1))                  # far to near
     dr = ImageDraw.Draw(img)
     vis = (V[..., 2] > 0.05).all(1) & (front | (kinds == 'glass'))
     for i in order:
         if vis[i]:
-            dr.polygon([tuple(P[i, 0]), tuple(P[i, 1]), tuple(P[i, 2])], fill=tuple(rgb[i]))
-    return img.resize(size, Image.LANCZOS)
+            dr.polygon([tuple(P[i, 0]), tuple(P[i, 1]), tuple(P[i, 2])], fill=tuple(rgb[i]) + (255,))
+    return img.convert('RGBa').resize(size, Image.LANCZOS).convert('RGBA')   # premultiplied: no dark fringes
