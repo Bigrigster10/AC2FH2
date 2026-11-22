@@ -34,6 +34,8 @@ class MeshIn:
     cast_shadow: bool = True
     bone: int = 0
     uv1: np.ndarray = None             # TEXCOORD1 = pattern channel (special paints / flakes); default = uv
+    lod_flags: int = None              # default: every detail level (ALL_LODS)
+    bucket: int = None                 # default: opaque 17 / transparent 60
 
 
 # stock car paint: TEXCOORD1 is an even-density unwrap at ~2.2 repeats per metre (measured on stock bodies)
@@ -135,7 +137,9 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
             struct.pack('<4f', 0, 1, 0, 1)
         bucket = (BUCKET_TRANSPARENT | BUCKET_SHADOW | BUCKET_NOT_SHADOW | BUCKET_A2C) if mi.transparent \
             else (BUCKET_OPAQUE | BUCKET_NOT_SHADOW)
-        common = dict(bone=mi.bone, lod_flags=ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
+        if mi.bucket is not None:
+            bucket = mi.bucket
+        common = dict(bone=mi.bone, lod_flags=mi.lod_flags if mi.lod_flags is not None else ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
                       morph_targets=0, morph_damage=0, idx32=1, topology=4, ib_index=0, ib_offset=0,
                       ib_draw_offset=istart, base_vertex=-vstart, index_count=len(tris) * 3, prim_count=len(tris),
                       acmr=_acmr(tris), ref_vertex_count=n, morph_buf=-1, skin_buf=-1, cbs=[], source_mesh=0)

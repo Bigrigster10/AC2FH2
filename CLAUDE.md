@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.9 sent for testing; v0.8 skipped)
+## Status (v0.10 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -45,7 +45,12 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 - v0.9: user spotted rim 'behind the brake': AC rim is deep-dish (hub plate ~11.5 cm in), donor rotor face at 9.4 cm
   -> rotor/hat poked through the rim centre. build_wheel returns a depth-vs-radius profile; brake records of each
   corner are pushed inward until clear (+5 mm) (_brake_clearance); verified 0 overlap at all 8 brake parts.
-- Next: confirm rims gold/size/at speed and brakes behind spokes; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.9 tested: GOLD RIMS, BRAKES BEHIND SPOKES OK. Left: rim looks small (thick 30% FH2 sidewall), no rim at speed.
+- v0.10: at speed the game shows only blur meshes -> AC RIM_BLUR meshes become stock-style 'blurLip_LOD0' (opaque, 17)
+  and 'blurLip_LOD0|blurRim_LOD0' (transparent, bucket 28), lod_flags 0x7E (no LODS0 bit); spokes named
+  'wheel_LODS0'. MeshIn has lod_flags/bucket overrides. fit_rim_size min aspect 18 (EXPERIMENTAL, stock min 30),
+  one size for both axles when AC rims are the same -> 235/24 R20. Stats/price predicted on the AC tyre spec.
+- Next: confirm at-speed rims + low-profile tyre look; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

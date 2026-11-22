@@ -24,7 +24,7 @@ from .carbin import AOMap, CarScene
 from .library import KINDS, DIFFUSE_PARAMS, ALPHA_PARAMS, TemplateLibrary, classify, car_relative
 from .material import MaterialInstance, T_TEX, name_hash
 from .modelbin import Model, ModelStats, skel_bones, skel_set
-from .writer import pattern_uv, MeshIn, build_model
+from .writer import ALL_LODS, pattern_uv, MeshIn, build_model
 
 WHEELS = ('LF', 'RF', 'LR', 'RR')
 
@@ -124,10 +124,22 @@ def wheel_shifts(car, donor, ph):
     return out
 
 
-def fit_rim_size(car, ph, log, min_aspect=29.5):
+def fit_rim_size(car, ph, log, min_aspect=18):
     """AC rims are often drawn bigger than the tyres.ini rim (thin tyre around them). FH2 draws its own tyre from the
     database size, so use the biggest rim (<= the drawn size) that keeps the overall wheel diameter -- i.e. the
     physics -- the same while the profile stays >= FH2's thinnest (30%)."""
+    ph.tyres_orig = dict(ph.tyres)
+    same_spec, drawn_min = ph.tyres['F'][2] == ph.tyres['R'][2], None
+    drawn_all = {}
+    for axle, corner in (('F', 'LF'), ('R', 'LR')):     # measure both first so equal AC rims get one size
+        W = car.nodes.get(f'WHEEL_{corner}')
+        ms = [m for m in car.meshes if f'/WHEEL_{corner}' in m.path and '/RIM_BLUR' not in m.path.upper()
+              and m.material.shader not in ('ksTyres', 'ksBrakeDisc') and classify(m.material).kind != 'skip']
+        if W is not None and ms:
+            c = W[3, :3]; P = np.concatenate([m.pos for m in ms])
+            drawn_all[axle] = 2 * float(np.hypot(P[:, 1] - c[1], P[:, 2] - c[2]).max()) / 0.0254
+    if same_spec and len(drawn_all) == 2:
+        drawn_min = min(drawn_all.values())
     for axle, corner in (('F', 'LF'), ('R', 'LR')):
         W = car.nodes.get(f'WHEEL_{corner}')
         ms = [m for m in car.meshes if f'/WHEEL_{corner}' in m.path and '/RIM_BLUR' not in m.path.upper()
@@ -138,6 +150,9 @@ def fit_rim_size(car, ph, log, min_aspect=29.5):
         drawn = 2 * float(np.hypot(P[:, 1] - c[1], P[:, 2] - c[2]).max()) / 0.0254
         w_mm, aspect, rim = ph.tyres[axle]
         outer = rim * 0.0127 + w_mm / 1000 * aspect / 100            # tyre radius, m
+        if same_spec and drawn_min:
+            drawn = min(drawn, drawn_min)                           # same rims front and rear in AC: one size
+        drawn_min = drawn
         for inch in range(int(drawn), int(rim), -1):
             a = (outer - inch * 0.0127) / (w_mm / 1000) * 100
             if a >= min_aspect:
@@ -158,10 +173,16 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
     if W is None or not ms:
         return None
     c = W[3, :3]
-    groups = {}
+    groups, blur = {}, {}
     for m in ms:
+        if m.material.shader in ('ksTyres', 'ksBrakeDisc'):
+            continue
+        if '/RIM_BLUR' in m.path.upper():           # AC's motion-blur rim: becomes FH2's at-speed blur meshes
+            kind = 'textured_alpha' if m.material.blend else 'textured'
+            blur.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
+            continue
         kind = overrides.get(m.material.name) or classify(m.material).kind
-        if kind == 'skip' or m.material.shader in ('ksTyres', 'ksBrakeDisc') or '/RIM_BLUR' in m.path.upper():
+        if kind == 'skip':
             continue
         groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
     if not groups:
@@ -174,7 +195,13 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
     k = R / r_vis
     sc = np.array([(width_m / 1000) / (x_in - x_out), k, k], np.float32)
     mats, idx, meshes_in = [], [], []
-    for i, (name, (kind, acmat, gms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
+    # stock wheel layout: spokes 'wheel_LODS0' (opaque); at speed the game shows 'blurLip' (opaque) and
+    # 'blurRim' (transparent, bucket 28) meshes, which exist at the moving detail levels only (no LODS0 bit)
+    parts = [(g, 'wheel_LODS0', None, None) for g in sorted(groups.items(), key=lambda kv: kv[0].lower())]
+    for g in sorted(blur.items(), key=lambda kv: kv[0].lower()):
+        tr = g[1][0] == 'textured_alpha'
+        parts.append((g, 'blurLip_LOD0|blurRim_LOD0' if tr else 'blurLip_LOD0', ALL_LODS & ~1, 28 if tr else 17))
+    for i, ((name, (kind, acmat, gms)), mesh_name, lods, bucket) in enumerate(parts):
         mi = lib.instance(kind); mi.name = name
         _fill_textures(mi, kind, acmat, bank)
         mats.append(mi.to_blob()); idx.append((name, 0))
@@ -182,12 +209,13 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
             pos = (m.pos - np.array([x_out, c[1], c[2]], np.float32)) * sc
             nrm = m.nrm / sc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
             tan = m.tan.copy(); tan[:, :3] *= sc; tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
-            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
-                                    tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
-    log(f'  rims ({axle}): {len(meshes_in)} meshes from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across), '
+            meshes_in.append(MeshIn(mesh_name, i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
+                                    tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'),
+                                    bone=0, lod_flags=lods, bucket=bucket, cast_shadow=lods is None))
+    log(f'  rims ({axle}): {len(meshes_in)} meshes ({sum(len(g[2]) for g in blur.values())} at-speed blur) from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across), '
         f'built at {rim_in}" x {width_m} mm, real size')
     # how deep the rim is at each radius (metres from the outer face): brakes must sit behind it
-    allw = np.concatenate([mi.pos for mi in meshes_in])
+    allw = np.concatenate([mi.pos for mi in meshes_in if mi.lod_flags is None])
     prof = (np.hypot(allw[:, 1], allw[:, 2]), allw[:, 0])
     return build_model(meshes_in, mats, skel), idx, prof
 
@@ -667,7 +695,15 @@ def convert(s: Settings):
         wl = {k: donor.wheels[k][0] + shifts[k] for k in WHEELS}
         r['ModelFrontTrackOuter'] = round(float(wl['RF'] - wl['LF']), 4)
         r['ModelRearTrackOuter'] = round(float(wl['RR'] - wl['LR']), 4)
+    # rim size is cosmetic here (same overall tyre size): rate/price the car on the AC tyre spec
+    dc = doc['tables']['Data_Car']['insert'][0]
+    cosmetic = {}
+    for side, ax in (('Front', 'F'), ('Rear', 'R')):
+        if getattr(ph, 'tyres_orig', None):
+            cosmetic.update({f'{side}TireAspect': dc[f'{side}TireAspect'], f'{side}WheelDiameterIN': dc[f'{side}WheelDiameterIN']})
+            dc[f'{side}TireAspect'], dc[f'{side}WheelDiameterIN'] = ph.tyres_orig[ax][1], ph.tyres_orig[ax][2]
     stats = physics.predict_stats(doc, s.gamedb, log)
+    dc.update(cosmetic)
     if s.price: doc['tables']['Data_Car']['insert'][0]['BaseCost'] = int(s.price)
     n, bad = database.verify(s.gamedb, doc)
     log(f'  database: {n} rows, checked against your gamedb ({"OK" if not bad else bad})')
