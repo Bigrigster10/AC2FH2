@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.8 sent for testing)
+## Status (v0.9 sent for testing; v0.8 skipped)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -42,7 +42,10 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 - v0.8: diffuse textures exported with alpha 255 (AC diffuse alpha = spec mask; wheel_lod2 alpha was 0 everywhere
   -> FH2 drew it black); fit_rim_size: biggest rim <= AC drawn size keeping overall tyre diameter with aspect >= 30
   (Subaru: 235/35R18 -> 235/30R19); small tile without shadow. At-speed invisibility may have been black-on-black.
-- Next: confirm rims gold/size/at speed; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.9: user spotted rim 'behind the brake': AC rim is deep-dish (hub plate ~11.5 cm in), donor rotor face at 9.4 cm
+  -> rotor/hat poked through the rim centre. build_wheel returns a depth-vs-radius profile; brake records of each
+  corner are pushed inward until clear (+5 mm) (_brake_clearance); verified 0 overlap at all 8 brake parts.
+- Next: confirm rims gold/size/at speed and brakes behind spokes; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

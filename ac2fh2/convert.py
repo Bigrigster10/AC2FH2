@@ -23,7 +23,7 @@ from .bundle import Bundle, Blob, Meta
 from .carbin import AOMap, CarScene
 from .library import KINDS, DIFFUSE_PARAMS, ALPHA_PARAMS, TemplateLibrary, classify, car_relative
 from .material import MaterialInstance, T_TEX, name_hash
-from .modelbin import ModelStats, skel_bones, skel_set
+from .modelbin import Model, ModelStats, skel_bones, skel_set
 from .writer import pattern_uv, MeshIn, build_model
 
 WHEELS = ('LF', 'RF', 'LR', 'RR')
@@ -186,7 +186,18 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
                                     tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
     log(f'  rims ({axle}): {len(meshes_in)} meshes from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across), '
         f'built at {rim_in}" x {width_m} mm, real size')
-    return build_model(meshes_in, mats, skel), idx
+    # how deep the rim is at each radius (metres from the outer face): brakes must sit behind it
+    allw = np.concatenate([mi.pos for mi in meshes_in])
+    prof = (np.hypot(allw[:, 1], allw[:, 2]), allw[:, 0])
+    return build_model(meshes_in, mats, skel), idx, prof
+
+
+def _brake_clearance(prof, P, margin=0.005):
+    """metres the brake part P (wheel space: x = depth inward, y/z radial) must move inward to clear the rim"""
+    r_rim, d_rim = prof
+    rb = float(np.hypot(P[:, 1], P[:, 2]).max())
+    inner = d_rim[r_rim <= rb]                         # rim surface within the brake's radius (hub, spokes)
+    return max(0.0, float(inner.max()) + margin - float(P[:, 0].min())) if len(inner) else 0.0
 
 
 def _fill_textures(mi, kind, acmat, bank):
@@ -547,6 +558,36 @@ def convert(s: Settings):
                     if use is rear:
                         m.path = m.path[:m.path.lower().rfind('.modelbin')] + '_rear.modelbin'
                         rear_entry = wf[:-len('.modelbin')] + '_rear.modelbin'
+    if rim:   # deep-dish AC rims: push each corner's brakes inward until the rotor/caliper clear the rim's hub
+        wheel_T = {m.bone_name[-2:].upper(): np.frombuffer(m.transform, '<f4').reshape(4, 4)
+                   for recs in wheel_files.values() for m in recs}
+        moved = {}
+        for p in sc.parts:
+            if p.part_type != 4:
+                continue
+            by_corner = {}
+            for m in p.models:
+                by_corner.setdefault(m.bone_name[-2:].upper(), []).append(m)
+            for corner, recs in by_corner.items():
+                Tw = wheel_T.get(corner)
+                if Tw is None:
+                    continue
+                prof = (rear if (rear and corner[0] == 'R') else rim)[2]
+                need = 0.0
+                for m in recs:
+                    M = np.frombuffer(m.transform, '<f4').reshape(4, 4)
+                    md = Model.load(donor.zip.read(entries[_rel(m.path, donor.media)]))
+                    geo = [md.geometry(bm)['pos'] for bm in md.meshes if bm[1].bucket_flags == 17]
+                    P = np.concatenate([g for g in geo if g is not None])
+                    L = np.c_[P, np.ones(len(P))] @ M @ np.linalg.inv(Tw)    # brake -> car -> wheel space
+                    need = max(need, _brake_clearance(prof, L[:, :3]))
+                if need > 0:
+                    side = np.sign(Tw[0, 0]) or 1.0                         # left wheels: inward = +x
+                    for m in recs:
+                        M = np.frombuffer(m.transform, '<f4').copy(); M[12] += side * need; m.transform = M.tobytes()
+                    moved[corner] = need
+        if moved:
+            log(f'  brakes moved inward to clear the rim hub: {", ".join(f"{k} {v * 100:.1f} cm" for k, v in moved.items())}')
     sc.ordinal, sc.media_name = s.car_id, new.lower()
     sc.skeleton = _retarget_bytes(sc.skeleton.encode('latin1'), old, new).decode('latin1')
     for p in sc.parts:
