@@ -112,22 +112,50 @@ def body_fit(car, donor):
     return scale, offset
 
 
+def _straighten(W):
+    """rotation (about the wheel centre) that takes the AC wheel axis to +x: removes baked-in camber/toe"""
+    c = W[3, :3]
+    a = W[0, :3] / np.linalg.norm(W[0, :3]); a = a if a[0] > 0 else -a
+    v, cs = np.cross(a, [1, 0, 0]), float(a[0])
+    K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    Rot = (np.eye(3) + K + K @ K / (1 + cs)).astype(np.float32)          # column-vector rotation a -> +x
+    return Rot, cs, (lambda p: ((p - c) @ Rot.T + c).astype(np.float32))
+
+
+def _rim_meshes(car, corner):
+    return [m for m in car.meshes if f'/WHEEL_{corner}' in m.path and '/RIM_BLUR' not in m.path.upper()
+            and m.material.shader not in ('ksTyres', 'ksBrakeDisc') and classify(m.material).kind != 'skip']
+
+
 def wheel_shifts(car, donor, ph):
-    """carbin wheel transforms mark the wheel's outer face: move each to the AC wheel position"""
+    """carbin wheel transforms mark the wheel's outer face: put it on the AC rim's outer face (AC wheel nodes sit
+    at the hub, often several cm inboard of the tyre's centre, so node +- half width puts the wheel too deep)"""
     ac = ac_wheel_centres(car)
     out = {}
     for k in WHEELS:
         w = (ph.tyres['F'] if k[1] == 'F' else ph.tyres['R'])[0] / 1000
         cx = ac[k][0]
         target = cx - w / 2 if cx < 0 else cx + w / 2
+        W, ms = car.nodes.get(f'WHEEL_{k}'), _rim_meshes(car, k)
+        if W is not None and ms:
+            x = _straighten(W)[2](np.concatenate([m.pos for m in ms]))[:, 0]
+            target = float(x.min()) if cx < 0 else float(x.max())
+            c = W[3, :3]                    # camber is removed, so don't let the face poke past the arch (+1 cm)
+            body = [m.pos for m in car.meshes if '/WHEEL_' not in m.path and classify(m.material).kind == 'paint']
+            if body:
+                B = np.concatenate(body); B = B[(abs(B[:, 2] - c[2]) < 0.45) & (B[:, 1] > c[1])]
+                if len(B):
+                    target = max(target, float(B[:, 0].min()) - 0.01) if cx < 0 else min(target, float(B[:, 0].max()) + 0.01)
         out[k] = target - donor.wheels[k][0]
     return out
 
 
-def fit_rim_size(car, ph, log, min_aspect=18):
+def fit_rim_size(car, ph, log, min_aspect=18, rim_drop=1, tyre_scale=0.975):
     """AC rims are often drawn bigger than the tyres.ini rim (thin tyre around them). FH2 draws its own tyre from the
     database size, so use the biggest rim (<= the drawn size) that keeps the overall wheel diameter -- i.e. the
-    physics -- the same while the profile stays >= FH2's thinnest (30%)."""
+    physics -- the same while the profile stays >= FH2's thinnest (30%).
+    In game the full drawn size looked too big with the FH2 tyre: rim_drop inches smaller and the overall tyre
+    tyre_scale smaller (owner's v0.11 feedback; stats/price still use the AC tyre spec)."""
     ph.tyres_orig = dict(ph.tyres)
     same_spec, drawn_min = ph.tyres['F'][2] == ph.tyres['R'][2], None
     drawn_all = {}
@@ -149,15 +177,15 @@ def fit_rim_size(car, ph, log, min_aspect=18):
         c = W[3, :3]; P = np.concatenate([m.pos for m in ms])
         drawn = 2 * float(np.hypot(P[:, 1] - c[1], P[:, 2] - c[2]).max()) / 0.0254
         w_mm, aspect, rim = ph.tyres[axle]
-        outer = rim * 0.0127 + w_mm / 1000 * aspect / 100            # tyre radius, m
+        outer = (rim * 0.0127 + w_mm / 1000 * aspect / 100) * tyre_scale     # tyre radius, m
         if same_spec and drawn_min:
             drawn = min(drawn, drawn_min)                           # same rims front and rear in AC: one size
         drawn_min = drawn
-        for inch in range(int(round(drawn)), int(rim), -1):
+        for inch in range(int(round(drawn)) - rim_drop, int(rim), -1):
             a = (outer - inch * 0.0127) / (w_mm / 1000) * 100
             if a >= min_aspect:
                 ph.tyres[axle] = (w_mm, int(round(a)), inch)
-                log(f'  rims ({axle}): AC draws {drawn:.1f}" rims -> {w_mm}/{round(a)} R{inch} (same overall size as '
+                log(f'  rims ({axle}): AC draws {drawn:.1f}" rims -> {w_mm}/{round(a)} R{inch} (overall {tyre_scale:.1%} of '
                     f'{w_mm}/{aspect} R{rim})')
                 break
 
@@ -175,11 +203,7 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F', donor_wheel=
         return None
     c = W[3, :3]
     # AC wheels carry camber/toe in the model; FH2 spins the rim about its x axis -> straighten it (else it wobbles)
-    a = W[0, :3] / np.linalg.norm(W[0, :3]); a = a if a[0] > 0 else -a
-    v, cs = np.cross(a, [1, 0, 0]), float(a[0])
-    K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    Rot = (np.eye(3) + K + K @ K / (1 + cs)).astype(np.float32)          # column-vector rotation a -> +x
-    straight = lambda p: ((p - c) @ Rot.T + c).astype(np.float32)
+    Rot, cs, straight = _straighten(W)
     groups = {}
     for m in ms:
         if m.material.shader in ('ksTyres', 'ksBrakeDisc') or '/RIM_BLUR' in m.path.upper():
