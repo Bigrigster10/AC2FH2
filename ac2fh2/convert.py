@@ -153,7 +153,7 @@ def fit_rim_size(car, ph, log, min_aspect=18):
         if same_spec and drawn_min:
             drawn = min(drawn, drawn_min)                           # same rims front and rear in AC: one size
         drawn_min = drawn
-        for inch in range(int(drawn), int(rim), -1):
+        for inch in range(int(round(drawn)), int(rim), -1):
             a = (outer - inch * 0.0127) / (w_mm / 1000) * 100
             if a >= min_aspect:
                 ph.tyres[axle] = (w_mm, int(round(a)), inch)
@@ -162,24 +162,27 @@ def fit_rim_size(car, ph, log, min_aspect=18):
                 break
 
 
-def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
+def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F', donor_wheel=None):
     """AC rim -> FH2 wheel model at REAL size (metres): x 0 = outer face .. tyre width inward, radius = the
     database rim radius. Stock FH2 wheels are a unit rim (r 0.14, x 0..1) plus morph targets the game blends to the
-    real rim size / width; there is no scaling in the car file, so a rim without morphs must already be real size.
-    The AC rim is fitted by its OWN extents (AC rim meshes are often drawn bigger than the rim size in tyres.ini)."""
+    real rim size / width; there is no scaling in the car file, so our rim is built at real size and gets zero-delta
+    morph targets (the spinning-wheel path needs morph data). The at-speed blur meshes are the donor's own
+    (stock 'wheel_blur' material, which fades with speed), scaled to the real size."""
     corner = 'LF' if axle == 'F' else 'LR'
     W = car.nodes.get(f'WHEEL_{corner}')
     ms = [m for m in car.meshes if f'/WHEEL_{corner}' in m.path]
     if W is None or not ms:
         return None
     c = W[3, :3]
-    groups, blur = {}, {}
+    # AC wheels carry camber/toe in the model; FH2 spins the rim about its x axis -> straighten it (else it wobbles)
+    a = W[0, :3] / np.linalg.norm(W[0, :3]); a = a if a[0] > 0 else -a
+    v, cs = np.cross(a, [1, 0, 0]), float(a[0])
+    K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    Rot = (np.eye(3) + K + K @ K / (1 + cs)).astype(np.float32)          # column-vector rotation a -> +x
+    straight = lambda p: ((p - c) @ Rot.T + c).astype(np.float32)
+    groups = {}
     for m in ms:
-        if m.material.shader in ('ksTyres', 'ksBrakeDisc'):
-            continue
-        if '/RIM_BLUR' in m.path.upper():           # AC's motion-blur rim: becomes FH2's at-speed blur meshes
-            kind = 'textured_alpha' if m.material.blend else 'textured'
-            blur.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
+        if m.material.shader in ('ksTyres', 'ksBrakeDisc') or '/RIM_BLUR' in m.path.upper():
             continue
         kind = overrides.get(m.material.name) or classify(m.material).kind
         if kind == 'skip':
@@ -187,37 +190,62 @@ def build_wheel(car, ph, lib, bank, skel, overrides, log, axle='F'):
         groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
     if not groups:
         return None
-    allp = np.concatenate([m.pos for g in groups.values() for m in g[2]])
+    allp = straight(np.concatenate([m.pos for g in groups.values() for m in g[2]]))
     x_out, x_in = float(allp[:, 0].min()), float(allp[:, 0].max())     # left wheels: outer face is -x
     r_vis = float(np.hypot(allp[:, 1] - c[1], allp[:, 2] - c[2]).max())
     width_m, _, rim_in = ph.tyres[axle]
     R = rim_in * 0.0254 / 2
     k = R / r_vis
     sc = np.array([(width_m / 1000) / (x_in - x_out), k, k], np.float32)
-    mats, idx, meshes_in = [], [], []
-    # stock wheel layout: spokes 'wheel_LODS0' (opaque); at speed the game shows 'blurLip' (opaque) and
-    # 'blurRim' (transparent, bucket 28) meshes, which exist at the moving detail levels only (no LODS0 bit)
-    parts = [(g, 'wheel_LODS0', None, None) for g in sorted(groups.items(), key=lambda kv: kv[0].lower())]
-    for g in sorted(blur.items(), key=lambda kv: kv[0].lower()):
-        tr = g[1][0] == 'textured_alpha'
-        parts.append((g, 'blurLip_LOD0|blurRim_LOD0' if tr else 'blurLip_LOD0', ALL_LODS & ~1, 28 if tr else 17))
-    for i, ((name, (kind, acmat, gms)), mesh_name, lods, bucket) in enumerate(parts):
+    mats, idx, meshes_in, tref = [], [], [], set()
+    for i, (name, (kind, acmat, gms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         mi = lib.instance(kind); mi.name = name
-        _fill_textures(mi, kind, acmat, bank)
+        tref |= _fill_textures(mi, kind, acmat, bank)
         mats.append(mi.to_blob()); idx.append((name, 0))
         for m in gms:
-            pos = (m.pos - np.array([x_out, c[1], c[2]], np.float32)) * sc
-            nrm = m.nrm / sc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
-            tan = m.tan.copy(); tan[:, :3] *= sc; tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
-            meshes_in.append(MeshIn(mesh_name, i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
-                                    tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'),
-                                    bone=0, lod_flags=lods, bucket=bucket, cast_shadow=lods is None))
-    log(f'  rims ({axle}): {len(meshes_in)} meshes ({sum(len(g[2]) for g in blur.values())} at-speed blur) from the AC wheel (drawn {2 * r_vis / 0.0254:.1f}" across), '
+            pos = (straight(m.pos) - np.array([x_out, c[1], c[2]], np.float32)) * sc
+            nrm = (m.nrm @ Rot.T) / sc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+            tan = m.tan.copy(); tan[:, :3] = (tan[:, :3] @ Rot.T) * sc
+            tan[:, :3] /= np.linalg.norm(tan[:, :3], axis=1, keepdims=True) + 1e-9
+            meshes_in.append(MeshIn('wheel_LODS0', i, pos.astype(np.float32), nrm.astype(np.float32), m.uv,
+                                    tan.astype(np.float32), m.tris, transparent=kind in ('glass', 'textured_alpha'), bone=0))
+    nblur = 0
+    if donor_wheel is not None:       # the donor's at-speed blur meshes (LOD0 versions), unit size -> real size
+        from .material import MaterialInstance
+        dm = Model.load(donor_wheel)
+        tr = dm.bundle.first('Modl').meta('TRef')
+        if tr:
+            n = int.from_bytes(tr[:4], 'little')
+            tref |= {int.from_bytes(tr[4 + 4 * j:8 + 4 * j], 'little') for j in range(n)}
+        dsc = np.array([width_m / 1000, R / 0.14, R / 0.14], np.float32)
+        used = {}
+        for blob, me in dm.meshes:
+            nm = bytes(blob.meta('Name') or b'').decode('latin1')
+            if not nm.startswith('blur') or not (me.lod_flags & 2) or me.bucket_flags not in (17, 28):
+                continue
+            g = dm.geometry((blob, me))
+            ch = min(i for (sem, i) in g['attrs'] if sem == 'TEXCOORD')     # blur discs use TEXCOORD2 only
+            raw = g['attrs'][('TEXCOORD', ch)]
+            uvt = np.frombuffer(me.uv_transforms, '<f4').reshape(5, 4)[ch]
+            uv = np.c_[raw[:, 0] * uvt[1] + uvt[0], raw[:, 1] * uvt[3] + uvt[2]].astype(np.float32)
+            t = next((v for (sem, i), v in sorted(g['attrs'].items()) if sem == 'TANGENT'), None)
+            t = t if t is not None else np.tile([0, 1, 0, 1], (len(uv), 1)).astype(np.float32)
+            if me.material not in used:
+                mb = dm.materials[me.material]
+                used[me.material] = len(mats)
+                mats.append(mb); idx.append((MaterialInstance.from_blob(mb).name, 0))
+            nrm = g['nrm'][:, :3] / dsc; nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+            meshes_in.append(MeshIn(nm, used[me.material], (g['pos'] * dsc).astype(np.float32), nrm.astype(np.float32),
+                                    uv, np.asarray(t, np.float32), g['tris'], transparent=me.bucket_flags == 28, bone=0,
+                                    lod_flags=ALL_LODS & ~1, bucket=me.bucket_flags, cast_shadow=False))
+            nblur += 1
+    log(f'  rims ({axle}): {len(meshes_in)} meshes ({nblur} stock at-speed blur) from the AC wheel '
+        f'(drawn {2 * r_vis / 0.0254:.1f}" across, camber {np.degrees(np.arccos(cs)):.1f} deg removed), '
         f'built at {rim_in}" x {width_m} mm, real size')
     # how deep the rim is at each radius (metres from the outer face): brakes must sit behind it
     allw = np.concatenate([mi.pos for mi in meshes_in if mi.lod_flags is None])
     prof = (np.hypot(allw[:, 1], allw[:, 2]), allw[:, 0])
-    return build_model(meshes_in, mats, skel), idx, prof
+    return build_model(meshes_in, mats, skel, tref, morphs=True), idx, prof
 
 
 def _brake_clearance(prof, P, margin=0.005):
@@ -574,11 +602,12 @@ def convert(s: Settings):
     if wheel_files:
         wentry = next(iter(wheel_files))
         wskel = Bundle.parse(donor.zip.read(entries[wentry])).first('Skel')
-        rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'F')
+        wdata = donor.zip.read(entries[wentry])
+        rim = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'F', wdata)
         if rim:
             rear = None
             if ph.tyres['R'] != ph.tyres['F']:      # different rear size: its own real-size model
-                rear = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'R')
+                rear = build_wheel(car, ph, lib, bank, wskel, s.material_overrides, log, 'R', wdata)
             for wf, recs in wheel_files.items():
                 for m in recs:
                     use = rear if (rear and m.bone_name[-2:-1].upper() == 'R') else rim

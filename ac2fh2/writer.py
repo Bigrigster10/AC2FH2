@@ -114,8 +114,11 @@ def build_layouts():
 ATTR_STRIDE = 8 + 4 * 4 + 8 * 2      # normal + 4 uv + 2 tangents = 40
 
 
-def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True) -> bytes:
-    """meshes: [MeshIn]; materials: [Blob (MatI)]; skel_blob copied from the donor part"""
+def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True, morphs=False) -> bytes:
+    """meshes: [MeshIn]; materials: [Blob (MatI)]; skel_blob copied from the donor part.
+    morphs: give every mesh the 2 morph targets stock wheels carry ('Mrph' weight[0]/weight[1] + an MBuf of per-vertex
+    position/normal deltas), with ZERO deltas: the geometry is already real size, but the game's spinning-wheel
+    rendering path expects morph data (wheels without it vanished at speed)."""
     positions, attrs, indices = [], [], []
     mesh_blobs = []
     vstart = istart = 0
@@ -140,9 +143,9 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
         if mi.bucket is not None:
             bucket = mi.bucket
         common = dict(bone=mi.bone, lod_flags=mi.lod_flags if mi.lod_flags is not None else ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
-                      morph_targets=0, morph_damage=0, idx32=1, topology=4, ib_index=0, ib_offset=0,
+                      morph_targets=2 if morphs else 0, morph_damage=0, idx32=1, topology=4, ib_index=0, ib_offset=0,
                       ib_draw_offset=istart, base_vertex=-vstart, index_count=len(tris) * 3, prim_count=len(tris),
-                      acmr=_acmr(tris), ref_vertex_count=n, morph_buf=-1, skin_buf=-1, cbs=[], source_mesh=0)
+                      acmr=_acmr(tris), ref_vertex_count=n, morph_buf=0 if morphs else -1, skin_buf=-1, cbs=[], source_mesh=0)
         me = Mesh(material=mi.material, bucket_flags=bucket, layout=0,
                   vbs=[(-1, 0, 12, vstart * 12), (0, 1, ATTR_STRIDE, vstart * ATTR_STRIDE)],
                   uv_transforms=uv_t, **common)
@@ -164,7 +167,14 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
     blobs.append(Blob('VerB', 1, 0, Buffer(len(allpos), 12, 1, R32G32B32_FLOAT, allpos.tobytes()).build(), [_id(-1)]))
     blobs.append(Blob('VerB', 1, 0, Buffer(vstart, ATTR_STRIDE, len(full.elems) - 1, R16G16B16A16_FLOAT,
                                            b''.join(attrs)).build(), [_id(0)]))
-    stats = ModelStats(meshes=len(mesh_blobs), buffers=3, layouts=2, materials=len(materials),
+    if morphs:   # one MBuf row per attribute-stream vertex: 2 targets x (pos delta, normal delta) as half4
+        d = np.zeros((vstart, 4, 4), np.float16)
+        w = np.concatenate([np.full(len(mi.pos), 0.0 if mi.lod_flags is not None else 1.0) for mi in meshes])
+        d[:, 0, 3] = w; d[:, 2, 3] = w            # stock: delta.w = 1 on the rim, 0 on blur meshes
+        blobs.append(Blob('MBuf', 1, 0, Buffer(vstart, 32, 4, R16G16B16A16_FLOAT, d.tobytes()).build(), [_id(0)]))
+        mrph = struct.pack('<H', 2) + b''.join(struct.pack('<i', 9) + f'weight[{i}]'.encode() for i in range(2))
+        blobs.insert(1, Blob('Mrph', 0, 0, mrph, []))
+    stats = ModelStats(meshes=len(mesh_blobs), buffers=4 if morphs else 3, layouts=2, materials=len(materials),
                        has_lod=1, lod_min=5, lod_max=-1, lod_flags=ALL_LODS)
     tref = sorted(set(tref_hashes))
     mmeta = [Meta('BBox', _bbox(allpos))]

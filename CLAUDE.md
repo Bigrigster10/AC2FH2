@@ -4,7 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 
-## Status (v0.10 sent for testing)
+## Status (v0.11 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -50,7 +50,14 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
   and 'blurLip_LOD0|blurRim_LOD0' (transparent, bucket 28), lod_flags 0x7E (no LODS0 bit); spokes named
   'wheel_LODS0'. MeshIn has lod_flags/bucket overrides. fit_rim_size min aspect 18 (EXPERIMENTAL, stock min 30),
   one size for both axles when AC rims are the same -> 235/24 R20. Stats/price predicted on the AC tyre spec.
-- Next: confirm at-speed rims + low-profile tyre look; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.10 tested: rims gold; AC blur disc VISIBLE AT REST (semi-transparent patches over spokes); still NOTHING at
+  speed (even blur meshes vanish) -> not a mesh/LOD problem; rims wobble (AC 5.1 deg camber baked in); still small.
+- v0.11: wheel meshes get stock-style MORPH data with zero deltas (writer morphs=True: Mrph 'weight[0]','weight[1]';
+  MBuf Id 0, stride 32 = 2 targets x (pos,nrm) half4, pos.w 1 rim / 0 blur; morph_targets 2, morph_buf 0;
+  ModelStats buffers 4). Stock morphs: spokes t0 collapses barrel x; blur t0 radial x1.318. Blur meshes now the
+  DONOR's LOD0 blurLip/blurRim (stock wheel_blur/black MatI, uv from TEXCOORD2) scaled to real size; AC RIM_BLUR
+  dropped. Rim straightened by WHEEL node axis (camber removed). Rim size rounds (21"). Wheel TRef filled.
+- Next: confirm at speed / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).
