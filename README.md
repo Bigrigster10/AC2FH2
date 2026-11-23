@@ -17,7 +17,7 @@ Autoshow next to the stock cars; nothing in the game is replaced.
 
 ## Usage (command line, for now)
 ```
-pip install numpy pillow etcpak texture2ddecoder
+pip install numpy pillow scipy scikit-learn etcpak texture2ddecoder
 python -m ac2fh2 "path\to\assettocorsa\content\cars\some_car" "path\to\FH2\Mount\media\cars" --db "path\to\FH2\Mount\media\stripped\gamedbRC.slt" --out "path\to\Azimuth\mods\Forza Horizon 2"
 ```
 Encrypted (protected) AC cars are not supported.
