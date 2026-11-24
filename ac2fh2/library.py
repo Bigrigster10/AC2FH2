@@ -79,6 +79,10 @@ def classify(mat) -> MatChoice:
     if re.search(r'light|lamp|reflector|lens|indicator|detail_glass', n):
         return MatChoice(mat.name, 'textured_alpha', diff, 'light lens')
     if sh == 'ksWindscreen' or re.search(r'glass|window|windscreen|windshield', n):
+        if sh != 'ksWindscreen' and getattr(mat, 'blend', 1) == 0 and not getattr(mat, 'alpha_tested', False):
+            # AC draws it opaque (e.g. 'black_glass' = frit borders / wiper cowl): must not become see-through
+            return MatChoice(mat.name, 'black_plastic' if 'black' in n or 'dark' in n else 'textured', diff,
+                             'named glass but opaque in AC')
         return MatChoice(mat.name, 'glass', diff, 'glass')
     if 'skin' in d or re.search(r'(^|_)(car)?paint|^body', n) and sh == 'ksPerPixelMultiMap':
         return MatChoice(mat.name, 'paint', diff, 'body paint')

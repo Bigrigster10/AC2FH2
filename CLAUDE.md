@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.17 sent for testing)
+## Status (v0.18 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -91,7 +91,10 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
   targets -> the game sizes it exactly like a stock rim. DB tyre = AC spec (235/35 R18), fit_rim_size removed
   (stock_tyres only clamps to stock ranges). Validator checks the convention (all 5 stock wheels pass it too).
   Pre-existing bug fixed: rear-model selection used the side letter (L/R) instead of the axle letter.
-- Next: confirm v0.17 rims (fit at rest, at speed, rim-size upgrade resizes rim); Autoshow = My Cars; better
+- v0.17 tested: WHEELS FIXED ("perfect"). Left: see-through where the wipers attach (cowl).
+- v0.18: classify: materials named glass/window but OPAQUE in AC (blend 0, not ksWindscreen, e.g. 'black_glass' =
+  frit borders + wiper cowl) are no longer FH2 glass -> black_plastic (or textured).
+- Next: confirm v0.18 cowl; Autoshow = My Cars; better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
