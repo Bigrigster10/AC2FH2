@@ -258,7 +258,20 @@ def _X(rows, compound):
     return np.c_[X, compound, pw, np.log(np.maximum(pw, 1e-3))]
 
 
-def predict_stats(doc, db_path, log=print):
+PI_DISPLAY = [400, 500, 600, 700, 800, 900, 1000]        # in-game PI number at the class cut-offs (piecewise linear)
+PI_VALUE = [0.3455, 0.436, 0.5265, 0.619, 0.7485, 0.8555, 0.9625]
+RATINGS = {'Speed': 'SpeedRating', 'Handling': 'HandlingRating', 'Acceleration': 'AccelerationRating',
+           'Launch': 'LaunchRating', 'Braking': 'BrakingRating'}
+
+
+def pi_from_display(n):
+    return float(np.interp(n, PI_DISPLAY, PI_VALUE))
+
+
+def predict_stats(doc, db_path, log=print, measured=None):
+    """measured: what the game itself shows for the car once owned (My Cars): {'PI': 779, 'Speed': 6.2, ...}.
+    The game computes those from the real physics; when given they replace the prediction (and the price is
+    re-predicted from them), so the Autoshow matches the owned car."""
     from sklearn.ensemble import GradientBoostingRegressor
     db = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
     c = _cols(db, 'Data_Car')
@@ -275,6 +288,22 @@ def predict_stats(doc, db_path, log=print):
         m = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=0)
         v = float(m.fit(X, y).predict(x)[0])
         out[col] = int(round(np.exp(v), -3)) if col == 'BaseCost' else v
+    if measured:
+        if 'PI' in measured:
+            out['PerformanceIndex'] = pi_from_display(measured['PI'])
+        for k, col in RATINGS.items():
+            if k in measured:
+                out[col] = float(measured[k])
+        known = [c for c in ['PerformanceIndex'] + list(RATINGS.values())]
+        Xs = np.c_[X, [[float(r[c] or 0) for c in known] for r in rows]]
+        xs = np.c_[x, [[out[c] for c in known]]]
+        for col in [c for c in STAT_COLUMNS if c not in known] + ['BaseCost']:   # the rest, consistent with them
+            y = np.array([float(r[col] or 0) for r in rows])
+            if col == 'BaseCost': y = np.log(np.maximum(y, 1000))
+            m = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.8, random_state=0)
+            v = float(m.fit(Xs, y).predict(xs)[0])
+            out[col] = int(round(np.exp(v), -3)) if col == 'BaseCost' else v
+        log(f'  stats: using the in-game values {measured}')
     for k in ('SpeedRating', 'HandlingRating', 'AccelerationRating', 'LaunchRating', 'BrakingRating'):
         out[k] = float(np.clip(out[k], 1, 10))
     out['PerformanceIndex'] = float(np.clip(out['PerformanceIndex'], 0, 1))

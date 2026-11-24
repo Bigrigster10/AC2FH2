@@ -44,6 +44,7 @@ class Settings:
     physics_donor: int = None       # car id; auto when None
     max_texture: int = 2048
     price: int = None               # override the predicted price
+    measured_stats: dict = None     # in-game My Cars values {'PI': 779, 'Speed': 6.2, ...}: replace the prediction
     material_overrides: dict = field(default_factory=dict)   # AC material -> kind
     log: object = print
 
@@ -759,7 +760,7 @@ def convert(s: Settings):
         if getattr(ph, 'tyres_orig', None):
             cosmetic.update({f'{side}TireAspect': dc[f'{side}TireAspect'], f'{side}WheelDiameterIN': dc[f'{side}WheelDiameterIN']})
             dc[f'{side}TireAspect'], dc[f'{side}WheelDiameterIN'] = ph.tyres_orig[ax][1], ph.tyres_orig[ax][2]
-    stats = physics.predict_stats(doc, s.gamedb, log)
+    stats = physics.predict_stats(doc, s.gamedb, log, s.measured_stats)
     dc.update(cosmetic)
     if s.price: doc['tables']['Data_Car']['insert'][0]['BaseCost'] = int(s.price)
     n, bad = database.verify(s.gamedb, doc)

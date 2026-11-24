@@ -17,12 +17,18 @@ def main():
     ap.add_argument('--name'); ap.add_argument('--short'); ap.add_argument('--year', type=int)
     ap.add_argument('--skin'); ap.add_argument('--model-donor'); ap.add_argument('--physics-donor', type=int)
     ap.add_argument('--max-texture', type=int, default=2048)
+    ap.add_argument('--ingame', help='what My Cars shows once you own the car, to correct the Autoshow stats/price: '
+                                     'PI,speed,handling,acceleration,launch,braking  e.g. 779,6.2,7.2,8.1,7.2,8.7')
     a = ap.parse_args()
+    measured = None
+    if a.ingame:
+        v = [float(x) for x in a.ingame.split(',')]
+        measured = dict(zip(['PI', 'Speed', 'Handling', 'Acceleration', 'Launch', 'Braking'], v))
     zips = []
     for p in a.fh2_cars:
         zips += sorted(glob.glob(os.path.join(p, '*.zip'))) if os.path.isdir(p) else [p]
     root = convert(Settings(a.ac_folder, zips, a.db, a.out, a.id, a.name, a.short, a.year, a.skin,
-                            a.model_donor, a.physics_donor, a.max_texture))
+                            a.model_donor, a.physics_donor, a.max_texture, measured_stats=measured))
     problems, _ = validate(root, a.db)
     raise SystemExit(1 if problems else 0)
 
