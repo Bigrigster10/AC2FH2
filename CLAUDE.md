@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.14 sent for testing)
+## Status (v0.15 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -70,7 +70,12 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
   thicker rather than the rim bigger), wheels stick out the side a little.
 - v0.14: target_aspect 44, tyre_scale 1.03 -> 235/44 R17 (sidewall ~10.3 cm, overall +3% vs AC; stats still on AC
   spec); wheel face capped 1 cm INSIDE the body arch extent (was 1 cm outside): front 2 cm in, rear 1.3 cm in.
-- Next: confirm v0.14 stance/size / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.13 Autoshow tile report: our thumbnails near-black with ORANGE rims in game, fine as PNG. ROOT CAUSE: TXCH format
+  tagged sRGB (2e 01 12 b0) -> game gamma-decodes again. Working RX-7 port thumbnails use 2e 01 00 b8 -> now used.
+  Also seen: Autoshow shows S1 850 (our predicted DB stats) but the owned car in My Cars shows A 776 = the game's own
+  PI for the actual physics -> our stat prediction runs high; calibrate against in-game values later.
+- v0.15 = v0.14 + thumbnail format fix (v0.14 was never installed).
+- Next: confirm v0.15 thumbnails + stance/size / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).

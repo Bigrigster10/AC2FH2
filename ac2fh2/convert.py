@@ -458,10 +458,12 @@ def _thumb(img, w, h):
 
 def _thumb_swatch(img, w, h):
     from . import xbtile
-    from .swatchbin import _bc7, FMT_BC7_SRGB
+    from .swatchbin import _bc7
     import struct
     data = xbtile.tile_chain([_bc7(img)], w, h)
-    txch = uuid.uuid4().bytes_le + struct.pack('<HHHHHH', w, h, 1, w, h, 1) + bytes([1, 1, 0]) + FMT_BC7_SRGB
+    # UI images: the format working add-on cars use (2e 01 00 b8, NOT sRGB-tagged). Tagged sRGB (2e 01 12 b0) the
+    # Autoshow decoded our gamma-encoded pixels a second time: near-black car, orange rims (v0.13 report)
+    txch = uuid.uuid4().bytes_le + struct.pack('<HHHHHH', w, h, 1, w, h, 1) + bytes([1, 1, 0]) + bytes([0x2e, 0x01, 0x00, 0xb8])
     return Bundle(1, 0, [Blob('TXCB', 2, 0, data, [Meta('TXCH', txch)])]).build()
 
 
