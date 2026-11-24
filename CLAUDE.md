@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.21 sent for testing)
+## Status (v0.21: lights done)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -114,7 +114,8 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
   NOTE: LightFunctionCarLightParam values are per-car PRESET indices (BMW head 37, Civic head 21...), not global
   functions; role mapping from material names works for the 22B, other donors need checking.
 - v0.21: when a donor's two reverse materials use different presets, both sides use the one fewer other lamps share.
-- Next: confirm v0.21 lights (head/tail at night, brake, reverse); Autoshow = My Cars; better
+- v0.21: owner happy with the lights, moving on.
+- Next: second AC car (generalise; light presets per donor); better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
