@@ -636,7 +636,9 @@ def convert(s: Settings):
         D[3, :3] = spindle[0]
         skel_data = skel_set(skel_data, 'boneSteeringWheelSpindle', D)
         log(f'  steering wheel: pivot {np.round(spindle[0], 3).tolist()}, turns with the driver')
+    lamp_meshes = {}                         # stock lamp slot (front_L ...) -> [MeshIn] (go into the donor's lamp files)
     for i, (mname, (kind, acmat, ms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
+        role = kind[1] if isinstance(kind, tuple) else None
         if isinstance(kind, tuple):          # ('light', role, rgb)
             mi, used = lights.make_material(light_tpl[kind[1]], mname, kind[1], kind[2], bank, lights.colour_param(light_tpl))
             tref |= used
@@ -663,8 +665,13 @@ def convert(s: Settings):
             uv, tris, uv1 = m.uv, m.tris, None
             if kind == 'paint':       # special paints (camo, wood...) tile over TEXCOORD1 at an even density
                 pos, nrm, uv, tan, tris, uv1 = pattern_uv(pos, nrm, uv, tan, tris)
-            meshes_in.append(MeshIn(f'{m.name}_LODS0', i, pos, nrm, uv, tan, tris,
-                                    transparent=kind in ('glass', 'textured_alpha'), bone=bone, uv1=uv1))
+            mesh = MeshIn(f'{m.name}_LODS0', i, pos, nrm, uv, tan, tris,
+                          transparent=kind in ('glass', 'textured_alpha'), bone=bone, uv1=uv1)
+            if role:
+                for slot, part in lights.lamp_slots(mesh, role):
+                    lamp_meshes.setdefault(slot, []).append(part)
+            else:
+                meshes_in.append(mesh)
     log(f'  {len(meshes_in)} meshes in {len(mats)} materials, {len(bank.files)} textures')
 
     # car scene: keep body record (re-targeted), brakes + wheels; upgrade parts -> empty model
@@ -676,7 +683,6 @@ def convert(s: Settings):
     skel = Bundle.parse(donor.zip.read(entries[body_entry])).first('Skel')
     if spindle is not None and 'boneSteeringWheelSpindle' in [b[0] for b in skel_bones(skel.data)[0]]:
         skel.data = skel_set(skel.data, 'boneSteeringWheelSpindle', skel_bones(skel_data)[0][spindle_index][4])
-    body_data = build_model(meshes_in, mats, skel, tref)
     empty_mi = lib.instance('black_plastic'); empty_mi.name = 'empty'
     empty = build_model([MeshIn('empty_LODS0', 0, np.zeros((3, 3), np.float32), np.tile([0, 1, 0], (3, 1)).astype(np.float32),
                                 np.zeros((3, 2), np.float32), np.tile([1, 0, 0, 1], (3, 1)).astype(np.float32),
@@ -688,9 +694,70 @@ def convert(s: Settings):
     ao_path = bank.add(('ao_white', 'AO'), Image.new('RGBA', (256, 256), (255, 255, 255, 255)), srgb=False, kind='AO')[0]
     ao_data = body_rec.ao_maps[0].data if body_rec.ao_maps else AOMap.none().data
     body_rec.ao_maps = [AOMap(3, ao_path, ao_data)]
+    # lamps: the game's light sources (Lights.bin: beams, brake/tail glow) are pinned to the donor's lamp model files and
+    # only exist if those files are in the carbin -> keep those records, fill them with the AC lamps of the same slot
+    # (front/rear, side, centre brake) and move the sources by how far the AC lamps sit from the donor's
+    lamp_files, lights_data = {}, None
+    lb_name = next((n for n in donor.zip.namelist() if n.lower() == 'lights.bin'), None)
+    part2 = [m for p in sc.parts if p.part_type == 2 for m in p.models]
+    if lb_name and lamp_meshes:
+        lights_data = donor.zip.read(lb_name)
+        lpaths = lights.lights_bin(lights_data)[0]
+        srcs = lights.light_sources(lights_data)
+        slots = {}
+        for k, lp in enumerate(lpaths):
+            rec = next((m for m in part2 if m.path.lower() == lp.lower()), None)
+            sp = [x[3] for x in srcs if x[2] == k]
+            if rec is None or not sp:
+                continue
+            c = np.mean(sp, 0)
+            slot = ('front_' if c[2] > 0 else 'centre' if abs(c[0]) < 0.25 else 'rear_') + \
+                   ('' if (c[2] <= 0 and abs(c[0]) < 0.25) else 'L' if c[0] < 0 else 'R')
+            slots.setdefault(slot, []).append((k, rec))
+        if 'centre' not in slots and 'centre' in lamp_meshes:     # no centre lamp file: centre brake joins a side
+            for mi_ in lamp_meshes.pop('centre'):
+                lamp_meshes.setdefault('rear_' + ('L' if mi_.pos[:, 0].mean() < 0 else 'R'), []).append(mi_)
+        deltas, placed = {}, set()
+        for slot, recs in slots.items():
+            ours = lamp_meshes.get(slot)
+            donor_pts = []
+            for k, rec in recs:
+                md = Model.load(donor.zip.read(entries[_rel(rec.path, donor.media)]))
+                donor_pts += [g for g in (md.geometry(bm)['pos'] for bm in md.meshes) if g is not None and len(g)]
+            recs.sort(key=lambda kr: 'bulb' not in kr[1].path.lower())   # the bulbs file gets the lamps
+            for j, (k, rec) in enumerate(recs):
+                rel = _rel(rec.path, donor.media)
+                if ours and j == 0:
+                    used_m = sorted({mi_.material for mi_ in ours})
+                    remap = {o: n for n, o in enumerate(used_m)}
+                    sub = [MeshIn(**{**mi_.__dict__, 'material': remap[mi_.material]}) for mi_ in ours]
+                    sk = Bundle.parse(donor.zip.read(entries[rel])).first('Skel')
+                    lamp_files[rel] = build_model(sub, [mats[o] for o in used_m], sk, tref)
+                    rec.material_indices = [indices[o] for o in used_m]
+                    placed.add(slot)
+                else:
+                    lamp_files[rel] = empty
+                    rec.material_indices = [('empty', 0)]
+                rec.ao_maps = [AOMap(3, ao_path, ao_data)]
+                if ours and donor_pts:
+                    P = np.concatenate(donor_pts); Q = np.concatenate([mi_.pos for mi_ in ours])
+                    dl = (Q.min(0) + Q.max(0)) / 2 - (P.min(0) + P.max(0)) / 2
+                    # lengthwise: keep each source's distance from the lamp's OUTER face (beams start ahead of the glass)
+                    dl[2] = Q[:, 2].max() - P[:, 2].max() if slot.startswith('front') else Q[:, 2].min() - P[:, 2].min()
+                    deltas[k] = tuple(dl)
+        lights_data = lights.shift_sources(lights_data, deltas)
+        left = [m_ for sl, ms_ in lamp_meshes.items() if sl not in placed for m_ in ms_]
+        if left:          # a slot the donor has no lamp file for: keep those lamps in the body (glow only)
+            log(f'  ! {len(left)} lamp meshes have no matching donor lamp file; kept in the body')
+        log(f'  lamps: {", ".join(sorted(placed))} in the donor lamp files; '
+            f'{len(deltas)} light-source groups moved onto the AC lamps')
+        keep_recs = [rec for recs in slots.values() for _, rec in recs]
+    else:
+        left, keep_recs = [m_ for ms_ in lamp_meshes.values() for m_ in ms_], []
     for p in sc.parts:
         if p.part_type == 2:
-            p.models = [body_rec]
+            p.models = [body_rec] + keep_recs
+    body_data = build_model(meshes_in + left, mats, skel, tref)
     # upgrade bodykits: AC cars have none -> keep only the stock entry of each group (an empty model)
     for g in sc.groups:
         g.upgrades = [u for u in g.upgrades if u.is_stock]
@@ -794,6 +861,10 @@ def convert(s: Settings):
         data = donor.zip.read(n)
         if low == body_entry:
             data = body_data
+        elif low in lamp_files:
+            data = _retarget_modelbin(lamp_files[low], old, new)
+        elif low == 'lights.bin' and lights_data is not None:
+            data = _retarget_bytes(lights_data, old, new)
         elif rim and low in wheel_files:
             data = rim[0]
         elif low == donor.carbin_name.lower():

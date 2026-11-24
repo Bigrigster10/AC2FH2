@@ -150,3 +150,73 @@ def split_sides(m):
         q.tris = inv.reshape(-1, 3)
         parts.append(q)
     return parts
+
+
+# ---- Lights.bin: the car's light SOURCES (beams, glow points), each pinned to one of the car's lamp model files ----
+# u32 0xdeadbeef, u32 1, u32 n, n x (u32 len, path, u16 1), u32 count, count x 76-byte records, u32 0.
+# Record: u32 type, u32 function (low 16 bits; brake 69, headlight 17, DRL 13, indicators 20/21 ...), u32 model index,
+# 2 x (position xyz0, direction xyz0). A source whose model is not in the carbin does not exist in game.
+import struct as _st
+
+LIGHT_REC = 76
+
+
+def lights_bin(data):
+    """-> (model paths, offset of the first record, record count)"""
+    assert _st.unpack_from('<I', data, 0)[0] == 0xdeadbeef
+    n = _st.unpack_from('<I', data, 8)[0]; p = 12; paths = []
+    for _ in range(n):
+        ln = _st.unpack_from('<I', data, p)[0]; paths.append(data[p + 4:p + 4 + ln].decode('latin1')); p += 6 + ln
+    cnt = _st.unpack_from('<I', data, p)[0]
+    assert p + 4 + cnt * LIGHT_REC + 4 == len(data), 'unexpected Lights.bin layout'
+    return paths, p + 4, cnt
+
+
+def light_sources(data):
+    paths, p0, cnt = lights_bin(data)
+    out = []
+    for i in range(cnt):
+        t, fn, mdl = _st.unpack_from('<3I', data, p0 + i * LIGHT_REC)
+        pos = _st.unpack_from('<3f', data, p0 + i * LIGHT_REC + 12)
+        out.append((t, fn & 0xffff, mdl, pos))
+    return out
+
+
+def shift_sources(data, deltas):
+    """deltas: {model index: (dx, dy, dz)} -> Lights.bin with those models' source positions moved"""
+    paths, p0, cnt = lights_bin(data)
+    b = bytearray(data)
+    for i in range(cnt):
+        base = p0 + i * LIGHT_REC
+        mdl = _st.unpack_from('<I', b, base + 8)[0]
+        d = deltas.get(mdl)
+        if d is None:
+            continue
+        for off in (12, 44):                       # position of each half (direction vectors untouched)
+            v = _st.unpack_from('<3f', b, base + off)
+            _st.pack_into('<3f', b, base + off, *(float(a) + float(c) for a, c in zip(v, d)))
+    return bytes(b)
+
+
+def lamp_slots(mesh, role):
+    """[(slot, MeshIn)]: the stock lamp slot(s) an AC lamp mesh belongs to (front_L/front_R/rear_L/rear_R/centre;
+    FH2 -x = left, +z = front). A narrow brake lamp on the centre line = centre (third brake light); a mesh holding
+    both sides' lamps is split by triangle centre."""
+    pos = mesh.pos
+    front = (pos[:, 2].min() + pos[:, 2].max()) / 2 > 0
+    if not front and role == 'brake' and np.abs(pos[:, 0]).max() < 0.3:
+        return [('centre', mesh)]
+    out = []
+    cx = pos[mesh.tris].mean(1)[:, 0]
+    for sel, side in ((cx < 0, 'L'), (cx >= 0, 'R')):
+        if not sel.any():
+            continue
+        t = mesh.tris[sel]
+        used, inv = np.unique(t, return_inverse=True)
+        q = copy.copy(mesh)
+        q.pos, q.nrm, q.uv, q.tan = mesh.pos[used], mesh.nrm[used], mesh.uv[used], mesh.tan[used]
+        if mesh.uv1 is not None:
+            q.uv1 = mesh.uv1[used]
+        q.tris = inv.reshape(-1, 3)
+        out.append((('front_' if front else 'rear_') + side, q))
+    return out
