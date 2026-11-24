@@ -140,17 +140,17 @@ def wheel_shifts(car, donor, ph):
         if W is not None and ms:
             x = _straighten(W)[2](np.concatenate([m.pos for m in ms]))[:, 0]
             target = float(x.min()) if cx < 0 else float(x.max())
-            c = W[3, :3]                    # camber is removed, so don't let the face poke past the arch (+1 cm)
+            c = W[3, :3]                    # camber is removed: keep the face 1 cm inside the arch (v0.13 poked out)
             body = [m.pos for m in car.meshes if '/WHEEL_' not in m.path and classify(m.material).kind == 'paint']
             if body:
                 B = np.concatenate(body); B = B[(abs(B[:, 2] - c[2]) < 0.45) & (B[:, 1] > c[1])]
                 if len(B):
-                    target = max(target, float(B[:, 0].min()) - 0.01) if cx < 0 else min(target, float(B[:, 0].max()) + 0.01)
+                    target = max(target, float(B[:, 0].min()) + 0.01) if cx < 0 else min(target, float(B[:, 0].max()) - 0.01)
         out[k] = target - donor.wheels[k][0]
     return out
 
 
-def fit_rim_size(car, ph, log, target_aspect=37, tyre_scale=0.975):
+def fit_rim_size(car, ph, log, target_aspect=44, tyre_scale=1.03):
     """AC rims are often drawn bigger than the tyres.ini rim (thin tyre around them). FH2 draws its own tyre from the
     database size, so use the biggest rim (<= the drawn size) that keeps the overall wheel diameter -- i.e. the
     physics -- the same while the profile stays >= FH2's thinnest (30%).
