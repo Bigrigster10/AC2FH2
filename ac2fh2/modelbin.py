@@ -249,6 +249,26 @@ class Model:
                     pos=out.get(('POSITION', 0)), nrm=out.get(('NORMAL', 0)), uv=out.get(('TEXCOORD', 0)),
                     attrs=out, tris=tris.reshape(-1, 3))
 
+    def morph_rows(self, blob_mesh):
+        """-> (N, 2 * morph_targets, 4) float32 morph rows for the vertices geometry() returns (same order), or None.
+        Per vertex the game reads 2n float4 rows (n position deltas, then n normal deltas); row .w = index into
+        g_MorphWeights (stock wheels: 0 = rim radius, 1 = width). Row of a vertex = index + base_vertex
+        (+ the attribute stream's start row), as the morphing vertex shaders compute it."""
+        blob, me = blob_mesh
+        if me.morph_targets <= 0 or me.morph_buf < 0:
+            return None
+        mb = next((Buffer.parse(b.data) for b in self.bundle.blobs if b.tag == 'MBuf' and b.id == me.morph_buf), None)
+        if mb is None:
+            return None
+        ib = self.ibufs[me.ib_index]
+        dt = '<u4' if ib.stride == 4 else '<u2'
+        idx = np.frombuffer(ib.data, dt)[me.ib_draw_offset: me.ib_draw_offset + me.index_count].astype(np.int64) + me.base_vertex
+        used = np.unique(idx)
+        attr = next((v for v in me.vbs if v[1] == 1), None)
+        rows = used + (attr[3] // attr[2] if attr else 0)
+        a = np.frombuffer(mb.data, np.uint8).reshape(mb.count, mb.stride)[rows]
+        return a.copy().view('<f2').astype(np.float32).reshape(len(rows), -1, 4)
+
 
 # ---------------------------------------------------------------- Skel 0.0
 def skel_bones(data):

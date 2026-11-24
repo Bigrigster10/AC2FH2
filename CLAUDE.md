@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.16 sent for testing)
+## Status (v0.17 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -82,7 +82,17 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
 - v0.16: Settings.measured_stats / CLI --ingame PI,speed,handling,accel,launch,braking: in-game values replace the
   prediction; other stat columns + price re-predicted with them as features (Subaru: A 779, 105,000 CR, 0-60 4.5 s).
   PI display <-> value: piecewise linear on class cut-offs (physics.pi_from_display).
-- Next: confirm v0.16 Autoshow = My Cars; better thumbnails; why the prediction runs ~70 PI high / no blur at rest / no wobble / size; later: write rim morph targets so rim upgrades resize it; rim offset (AC RIM_OFFSET: rim sticks out ~8 cm, radius 0.166 vs 0.14);
+- v0.16 tested: owner liked the older (thinner) tyre better, "make the rim bigger instead"; asked for the ROOT CAUSE of
+  the endless wheel problems + a bulletproof fix.
+- v0.17 = WHEEL SYSTEM REWRITE (see "Wheels" below). Root cause: FH2 sizes rims AND tyres at runtime with morph
+  weights from the database; we built fixed real-size rims, so any mismatch with the game's tyre (likely a lip/flange
+  offset -> black ring = "rim too small"), every DB size tweak, rim-size upgrades and the at-speed blur texture (drawn
+  from UNIT geometry) were all guesswork. Now the AC rim is converted into the stock unit convention with real morph
+  targets -> the game sizes it exactly like a stock rim. DB tyre = AC spec (235/35 R18), fit_rim_size removed
+  (stock_tyres only clamps to stock ranges). Validator checks the convention (all 5 stock wheels pass it too).
+  Pre-existing bug fixed: rear-model selection used the side letter (L/R) instead of the axle letter.
+- Next: confirm v0.17 rims (fit at rest, at speed, rim-size upgrade resizes rim); Autoshow = My Cars; better
+  thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).
@@ -118,8 +128,7 @@ New car ids 3000-8999; car N owns ids N and N*1000..N*1000+999. ContentId must b
 - carbin v5 (carbin.py): parts (2 body, 4 brakes, 43 wheels) + upgrade groups (9 wing, 34/35 bumpers, 36 hood,
   37 skirts, 41 cage) with upgrade ids = DB rows. material_indices = (name, flag: 1 paint, 2 secondary, 4/8/16 panels,
   128 glass). Every model needs an AO map entry (path + 27-byte data copied from donor).
-  Wheel models: stock = unit rim (x 0 outer face..1, r 0.14) + morph targets to real size; carbin T = outer face (no
-  scale), right side mirrored. Ours: real-size metres, no morphs.
+  Wheel models: carbin T = outer face (no scale), right side mirrored; ONE model for all 4 corners. See "Wheels".
 - Skeleton: bone list identical in skeleton.modelbin and each model's Skel. Steering: boneSteeringWheelSpindle (X axis
   = column). Locators.xml carLocator_steeringWheel. Driver animations (scene/Drivers/*.gr2) are baked per car -> pick
   donor with same steering side.
@@ -128,6 +137,28 @@ New car ids 3000-8999; car N owns ids N and N*1000..N*1000+999. ContentId must b
   2D while >= 64x32 blocks else 1D thin (8x8 micro tiles, >= 1 KiB). Mipped textures kept >= 256x128 (smaller unverified).
 - AC: kn5 v5 (kn5.py); data.acd key from folder name (acd.py). AC +X = left; FH2 -X = left -> mirror X
   (accar.py: negate x of pos/nrm/tan, tan.w *= -1, reverse winding; nodes S@M@S).
+
+## Wheels (verified on all 5 stock wheels + the game's own morphing shaders; convert.build_wheel, validate.check_wheel)
+- Stock wheel model = UNIT rim: lip radius exactly 0.140, face/spokes at REAL depth (x 0 = outer face .. ~0.09,
+  +x inward, not morphed), barrel back ring at x = 1.0. Mrph blob 'weight[0]','weight[1]'. MBuf (fmt 10 half4)
+  per vertex 2n rows: n position deltas then n normal deltas; row .w = INDEX into g_MorphWeights.
+  Radius target: weight 0, delta 1.318*(0,y,z), normal delta normalize(nx,ny/2.318,nz/2.318)-n.
+  Width target: weight 1, back ring dx = -0.9 (others 0), normal delta 0. Blur meshes (blurLip|blurRim, mt1):
+  radius target only (weight 0). Low LODs (LOD2-5) are decimated, deltas off by <1.6 cm.
+- Morph VS (Shaders/*/*Morphing.pc.vso in every car zip; tools/dxbc.py disassembles): row = 2n*(SV_VertexID +
+  g_AnimationInfo.w) + i; pos += g_MorphWeights[row.w] * row.xyz (x tyre-deformation factor for weight index 2-4,
+  used by tyres); normals likewise then normalised. Our morph models use base_vertex 0 / stream offsets 0 / absolute
+  indices so row = vertex number under any engine offset convention.
+- WheelBlurScenario VS does NOT apply morphs: the at-speed blur texture is rendered from the UNIT rim; blur discs map
+  it with TEXCOORD2 -> rims MUST be in unit space for a correct blur.
+- Weights are computed by the exe from Data_Car Front/RearWheelDiameterIN + tyre width (formula not in the files; the
+  tyre shares weight 0/1, so a unit rim always meets the tyre). rim_scale() bounds the scale (lip at nominal radius
+  .. nominal + ~2 cm flange) for brake-clearance checks only; clearance is checked at stock size and +1/+2".
+- Ours: AC rim straightened (camber), lip -> 0.14 (ku = 0.14 / AC lip radius), depth fitted into the tyre width
+  (only compressed), face kept, barrel behind the face (split) interpolates to x 1.0 with dx -0.9*t (no folding).
+  Donor blur meshes copied unchanged with their own morph rows. One model for all corners unless the AC rear rim
+  design differs (_rim_signature). DB tables: List_Wheels (StockWheelID, BrakeDrawOffset), WheelNormOffsets,
+  List_UpgradeRimSize*/CarBodyTireWidth* (ours copied from the physics donor).
 
 ## Database rules (database.py, physics.py)
 - Rows from 3 stock cars: model donor (zip: body, bumpers, wing, cameras, part positions), identity donor (same brand,

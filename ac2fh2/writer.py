@@ -36,6 +36,7 @@ class MeshIn:
     uv1: np.ndarray = None             # TEXCOORD1 = pattern channel (special paints / flakes); default = uv
     lod_flags: int = None              # default: every detail level (ALL_LODS)
     bucket: int = None                 # default: opaque 17 / transparent 60
+    morph: np.ndarray = None           # (N, 4, 4) morph rows [pos A, pos B, normal A, normal B], .w = weight index
 
 
 # stock car paint: TEXCOORD1 is an even-density unwrap at ~2.2 repeats per metre (measured on stock bodies)
@@ -114,11 +115,16 @@ def build_layouts():
 ATTR_STRIDE = 8 + 4 * 4 + 8 * 2      # normal + 4 uv + 2 tangents = 40
 
 
+# morph rows of a vertex without deltas: stock rim pattern (A = width, weight index 1; B = radius, weight index 0)
+ZERO_MORPH = np.array([[0, 0, 0, 1], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 0]], np.float32)
+
+
 def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True, morphs=False) -> bytes:
     """meshes: [MeshIn]; materials: [Blob (MatI)]; skel_blob copied from the donor part.
-    morphs: give every mesh the 2 morph targets stock wheels carry ('Mrph' weight[0]/weight[1] + an MBuf of per-vertex
-    position/normal deltas), with ZERO deltas: the geometry is already real size, but the game's spinning-wheel
-    rendering path expects morph data (wheels without it vanished at speed)."""
+    morphs: every mesh gets 2 morph targets like stock wheels ('Mrph' weight[0]/weight[1] + an MBuf with 4 half4 rows
+    per vertex: MeshIn.morph, or zero deltas). The morphing vertex shaders find a vertex's rows from SV_VertexID plus
+    a per-draw offset the game derives from the mesh, so morph models use the simplest layout that every variant
+    agrees on: base_vertex 0, stream offsets 0, absolute indices -> MBuf row = index = vertex number."""
     positions, attrs, indices = [], [], []
     mesh_blobs = []
     vstart = istart = 0
@@ -144,16 +150,18 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
             bucket = mi.bucket
         common = dict(bone=mi.bone, lod_flags=mi.lod_flags if mi.lod_flags is not None else ALL_LODS, lod_min=0, lod_max=255, bucket_order=0, skin_elems=0,
                       morph_targets=2 if morphs else 0, morph_damage=0, idx32=1, topology=4, ib_index=0, ib_offset=0,
-                      ib_draw_offset=istart, base_vertex=-vstart, index_count=len(tris) * 3, prim_count=len(tris),
-                      acmr=_acmr(tris), ref_vertex_count=n, morph_buf=0 if morphs else -1, skin_buf=-1, cbs=[], source_mesh=0)
+                      ib_draw_offset=istart, base_vertex=0 if morphs else -vstart, index_count=len(tris) * 3,
+                      prim_count=len(tris), acmr=_acmr(tris), ref_vertex_count=n, morph_buf=0 if morphs else -1,
+                      skin_buf=-1, cbs=[], source_mesh=0)
+        off = 0 if morphs else vstart      # morph models: absolute indices into streams that start at row 0
         me = Mesh(material=mi.material, bucket_flags=bucket, layout=0,
-                  vbs=[(-1, 0, 12, vstart * 12), (0, 1, ATTR_STRIDE, vstart * ATTR_STRIDE)],
+                  vbs=[(-1, 0, 12, off * 12), (0, 1, ATTR_STRIDE, off * ATTR_STRIDE)],
                   uv_transforms=uv_t, **common)
         meta = [Meta('Name', mi.name.encode('latin1')), Meta('BBox', _bbox(mi.pos))]
         mesh_blobs.append(Blob('Mesh', 1, 7, me.build(), meta))
         if shadows and mi.cast_shadow and not mi.transparent:
             sh = Mesh(material=mi.material, bucket_flags=BUCKET_OPAQUE | BUCKET_SHADOW, layout=1,
-                      vbs=[(-1, 0, 12, vstart * 12)], uv_transforms=struct.pack('<4f', 0, 1, 0, 1) * 5, **common)
+                      vbs=[(-1, 0, 12, off * 12)], uv_transforms=struct.pack('<4f', 0, 1, 0, 1) * 5, **common)
             mesh_blobs.append(Blob('Mesh', 1, 7, sh.build(), [Meta('Name', (mi.name + '_Shadow').encode('latin1')),
                                                              Meta('BBox', _bbox(mi.pos))]))
         vstart += n; istart += len(tris) * 3
@@ -167,10 +175,10 @@ def build_model(meshes, materials, skel_blob: Blob, tref_hashes=(), shadows=True
     blobs.append(Blob('VerB', 1, 0, Buffer(len(allpos), 12, 1, R32G32B32_FLOAT, allpos.tobytes()).build(), [_id(-1)]))
     blobs.append(Blob('VerB', 1, 0, Buffer(vstart, ATTR_STRIDE, len(full.elems) - 1, R16G16B16A16_FLOAT,
                                            b''.join(attrs)).build(), [_id(0)]))
-    if morphs:   # one MBuf row per attribute-stream vertex: 2 targets x (pos delta, normal delta) as half4
-        d = np.zeros((vstart, 4, 4), np.float16)
-        w = np.concatenate([np.full(len(mi.pos), 0.0 if mi.lod_flags is not None else 1.0) for mi in meshes])
-        d[:, 0, 3] = w; d[:, 2, 3] = w            # stock: delta.w = 1 on the rim, 0 on blur meshes
+    if morphs:   # per vertex: [pos delta A, pos delta B, normal delta A, normal delta B] as half4, .w = weight index
+        d = np.concatenate([np.asarray(mi.morph, np.float32).reshape(len(mi.pos), 4, 4) if mi.morph is not None
+                            else np.tile(ZERO_MORPH, (len(mi.pos), 1, 1)) for mi in meshes]).astype(np.float16)
+        assert len(d) == vstart
         blobs.append(Blob('MBuf', 1, 0, Buffer(vstart, 32, 4, R16G16B16A16_FLOAT, d.tobytes()).build(), [_id(0)]))
         mrph = struct.pack('<H', 2) + b''.join(struct.pack('<i', 9) + f'weight[{i}]'.encode() for i in range(2))
         blobs.insert(1, Blob('Mrph', 0, 0, mrph, []))
