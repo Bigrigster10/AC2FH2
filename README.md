@@ -25,4 +25,4 @@ Encrypted (protected) AC cars are not supported.
 ## Credits / references
 Format knowledge from fh2-mod-platform (Trinculo54), ForzaHorizon2 Extra Options (RokkuDayo),
 ForzaTech Studio (Nenkai et al., MIT), ForzaTech-extraction-tools (Doliman100), AzimuthModStudio.
-<img width="1080" height="1440" alt="temp_image_068099A7-2E53-480D-8982-E4E5F6742380" src="https://github.com/user-attachments/assets/b9c49281-ae49-47d3-b0a2-f6f560c9c66c" />
+<img width="540" height="720" alt="temp_image_068099A7-2E53-480D-8982-E4E5F6742380" src="https://github.com/user-attachments/assets/b9c49281-ae49-47d3-b0a2-f6f560c9c66c" />
