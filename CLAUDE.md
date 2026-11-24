@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.18 sent for testing)
+## Status (v0.19 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -94,7 +94,14 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
 - v0.17 tested: WHEELS FIXED ("perfect"). Left: see-through where the wipers attach (cowl).
 - v0.18: classify: materials named glass/window but OPAQUE in AC (blend 0, not ksWindscreen, e.g. 'black_glass' =
   frit borders + wiper cowl) are no longer FH2 glass -> black_plastic (or textured).
-- Next: confirm v0.18 cowl; Autoshow = My Cars; better
+- v0.18 tested: cowl/wiper area FIXED.
+- v0.19: WORKING LIGHTS (lights.py). FH2 glow is material driven: light materials (lbk_custom_001 reflector etc.)
+  carry LightFunctionCarLightParam (0x493073a0) = preset index in the car's LightPresets.bin (kept from the donor),
+  glow colour 0xc308c931, strength 0x6f45c5f1, mask texture 0x35c82561. 22B functions: headlight 17, DRL 13, tail 32,
+  brake 69, reverse L 1 / R 18, indicators L 21 / R 20. AC lights.ini [BRAKE_n]/[LIGHT_n] NAME meshes -> copy of the
+  donor's material for that role (brake / head / amber = head fn + amber colour / tail), mask -> white; reverse lamps
+  by name, split per side. Interior LIGHT entries (gauges) skipped. Lights.bin still the donor's (beam projection).
+- Next: confirm v0.19 lights (head/tail at night, brake, reverse); Autoshow = My Cars; better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).

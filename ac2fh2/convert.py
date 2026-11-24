@@ -592,12 +592,32 @@ def convert(s: Settings):
         col = A[2, :3] * scale; col /= np.linalg.norm(col)
         if col[2] < 0: col = -col
         spindle = (A[3, :3] * scale + offset, col)
+    from . import lights
+    light_roles = lights.roles(car)
+    light_tpl = lights.templates(donor.zip) if light_roles else {}
     groups = {}
     for m in keep:
         kind = s.material_overrides.get(m.material.name) or classify(m.material).kind
         if kind == 'skip':
             continue
+        lr = lights.mesh_role(m, light_roles)
+        if lr and lr[0].startswith('reverse_'):          # per-side function: split a mesh holding both lamps
+            for part, side in zip(lights.split_sides(m), 'LR'):
+                role = f'reverse_{side}'
+                if part is not None and role in light_tpl:
+                    groups.setdefault(f'{m.material.name}_{role}light', (('light', role, lr[1]), m.material, []))[2].append(part)
+            continue
+        if lr and lr[0] in light_tpl:      # AC lights.ini lamp -> the donor's light material for that function
+            key = f'{m.material.name}_{lr[0]}light'
+            groups.setdefault(key, (('light',) + lr, m.material, []))[2].append(m)
+            continue
         groups.setdefault(m.material.name, (kind, m.material, []))[2].append(m)
+    nl = {}
+    for k, v in groups.items():
+        if isinstance(v[0], tuple):
+            nl[v[0][1]] = nl.get(v[0][1], 0) + len(v[2])
+    if nl:
+        log(f'  lights: {", ".join(f"{n} {r}" for r, n in sorted(nl.items()))} lamp parts glow with the game\'s light functions')
 
     mats, indices, meshes_in, tref = [], [], [], set()
     entries = {n.lower(): n for n in donor.zip.namelist()}
@@ -617,11 +637,18 @@ def convert(s: Settings):
         skel_data = skel_set(skel_data, 'boneSteeringWheelSpindle', D)
         log(f'  steering wheel: pivot {np.round(spindle[0], 3).tolist()}, turns with the driver')
     for i, (mname, (kind, acmat, ms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
-        mi = lib.instance(kind)
-        mi.name = mname
-        tref |= _fill_textures(mi, kind, acmat, bank)
-        mats.append(mi.to_blob())
-        indices.append((mname, KINDS[kind][1]))
+        if isinstance(kind, tuple):          # ('light', role, rgb)
+            mi, used = lights.make_material(light_tpl[kind[1]], mname, kind[1], kind[2], bank, lights.colour_param(light_tpl))
+            tref |= used
+            mats.append(mi.to_blob())
+            indices.append((mname, 0))
+            kind = 'light'
+        else:
+            mi = lib.instance(kind)
+            mi.name = mname
+            tref |= _fill_textures(mi, kind, acmat, bank)
+            mats.append(mi.to_blob())
+            indices.append((mname, KINDS[kind][1]))
         for m in ms:
             pos, nrm, tan = m.pos * scale + offset, m.nrm, m.tan
             bone = 1
