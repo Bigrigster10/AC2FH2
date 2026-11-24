@@ -78,7 +78,7 @@ def mesh_role(m, table):
 def templates(donor_zip):
     """donor light materials (MatI blobs) for each role, chosen by name + light function"""
     from .modelbin import Model
-    found = {}
+    found, other_fns = {}, []
     for n in donor_zip.namelist():
         low = n.lower()
         if not (low.endswith('.modelbin') and 'lights' in low and 'glass' not in low.split('/')[-1]):
@@ -99,15 +99,28 @@ def templates(donor_zip):
             role = ('brake' if 'brake' in nm else 'reverse_' + side if 'reverse' in nm else
                     'head' if 'headlight' in nm or ('headlight' in low and 'drl' not in nm and 'default' not in nm) else
                     'tail' if 'taillight' in low and ('custom_01' in nm or 'tail' in nm) else None)
+            if not role:
+                other_fns.append(fn_of(blob))
             if role and found.get(role, (0,))[0] < score:
                 found[role] = (score, blob)
     out = {k: v[1] for k, v in found.items()}
+    # many cars have ONE reverse lamp (the other side is a rear fog lamp: on the 22B the right 'reverse' material uses
+    # preset 18, the same as the fog lamps, and never lights when reversing) -> both sides use the real reverse preset
+    rev = {k: fn_of(b) for k, b in out.items() if k.startswith('reverse_')}
+    if len(set(rev.values())) > 1:
+        best = min(rev, key=lambda k: (other_fns.count(rev[k]), k))
+        for k in rev:
+            out[k] = out[best]
     if 'head' in out:
         out['amber'] = out['head']
     for side, other in (('L', 'R'), ('R', 'L')):          # a donor with one reverse lamp serves both sides
         if f'reverse_{side}' not in out and f'reverse_{other}' in out:
             out[f'reverse_{side}'] = out[f'reverse_{other}']
     return out
+
+
+def fn_of(blob):
+    return next((p.value for p in MaterialInstance.from_blob(blob).params if p.hash == LIGHT_FUNCTION), None)
 
 
 def colour_param(templates_):

@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.20 sent for testing)
+## Status (v0.21 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -108,7 +108,13 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
 - v0.20: lamp meshes go INTO the donor's Lights.bin model files (records kept: part SecondaryLights/PrimaryLights), by slot
   front_L/R, rear_L/R, centre (narrow brake = third brake light); meshes spanning both sides split. Bulbs file gets the
   lamps, other files in the slot an empty model. Sources moved by slot: x/y bbox centre, z keeps distance to the outer face.
-- Next: confirm v0.20 lights (head/tail at night, brake, reverse); Autoshow = My Cars; better
+- v0.20 tested: HEADLIGHT BEAMS + tail/brake WORK. Left: only ONE reverse lamp lights (22B right 'reverse' material
+  = preset 18, same as the fog lamps -> it's a rear fog, the 22B has one reverse lamp). Brake light "only part of
+  braking" = likely FH2 brake-to-reverse at standstill (brake turns into reverse), asked owner to confirm.
+  NOTE: LightFunctionCarLightParam values are per-car PRESET indices (BMW head 37, Civic head 21...), not global
+  functions; role mapping from material names works for the 22B, other donors need checking.
+- v0.21: when a donor's two reverse materials use different presets, both sides use the one fewer other lamps share.
+- Next: confirm v0.21 lights (head/tail at night, brake, reverse); Autoshow = My Cars; better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
