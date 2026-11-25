@@ -44,6 +44,7 @@ class Settings:
     physics_donor: int = None       # car id; auto when None
     max_texture: int = 2048
     price: int = None               # override the predicted price
+    gauge_speed_scale: float = 1.0  # speedo needle sweep multiplier (AC mods whose STEP misses their own dial)
     measured_stats: dict = None     # in-game My Cars values {'PI': 779, 'Speed': 6.2, ...}: replace the prediction
     material_overrides: dict = field(default_factory=dict)   # AC material -> kind
     log: object = print
@@ -595,10 +596,16 @@ def convert(s: Settings):
     from . import lights
     light_roles = lights.roles(car)
     light_tpl = lights.templates(donor.zip) if light_roles else {}
+    from . import gauges
+    dial_names = gauges.dial_meshes(car)
+    dial_tpl = gauges.gauge_template(donor.zip) if dial_names else None
     groups = {}
     for m in keep:
         kind = s.material_overrides.get(m.material.name) or classify(m.material).kind
         if kind == 'skip':
+            continue
+        if dial_names and any(seg in dial_names for seg in m.path.split('/')) and dial_tpl is not None:
+            groups.setdefault(f'{m.material.name}_gauge', ('gauge', m.material, []))[2].append(m)
             continue
         lr = lights.mesh_role(m, light_roles)
         if lr and lr[0].startswith('reverse_'):          # per-side function: split a mesh holding both lamps
@@ -636,10 +643,36 @@ def convert(s: Settings):
         D[3, :3] = spindle[0]
         skel_data = skel_set(skel_data, 'boneSteeringWheelSpindle', D)
         log(f'  steering wheel: pivot {np.round(spindle[0], 3).tolist()}, turns with the driver')
+    # dashboard needles: AC ARROW_SPEED / ARROW_RPM -> the donor's boneSpeed / boneTach (rest = AC pivot, no rotation)
+    # + the donor's gauge animations rewritten for the AC dial (gauges.py)
+    needle_of, gauge_files = {}, {}
+    for gk, (obj, fn, vmax) in gauges.needles(car, s.gauge_speed_scale).items():
+        bname, gpath, _ = gauges.BONES[gk]
+        gentry = next((n for n in donor.zip.namelist() if n.lower() == gpath.lower()), None)
+        if bname not in bone_names or gentry is None:
+            continue
+        piv, ax = gauges.pivot_axis(car.nodes[obj], scale, offset)
+        bi = bone_names.index(bname)
+        try:
+            gauge_files[gentry.lower()], _ = gauges.build(gk, donor.zip.read(gentry), bones[bi][4][3, :3], piv, ax, fn, vmax)
+        except Exception as e:
+            log(f'  ! {gk} needle: could not rewrite {gentry} ({e}); needle stays still'); continue
+        D = np.eye(4, dtype=np.float32); D[3, :3] = piv
+        skel_data = skel_set(skel_data, bname, D)
+        needle_of[obj] = (bi, piv)
+        log(f'  {gk} needle: {obj} on {bname}, 0..{vmax:.0f} {"km/h" if gk == "speed" else "rpm"} '
+            f'-> {float(fn(vmax)):.0f} deg')
     lamp_meshes = {}                         # stock lamp slot (front_L ...) -> [MeshIn] (go into the donor's lamp files)
     for i, (mname, (kind, acmat, ms)) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].lower())):
         role = kind[1] if isinstance(kind, tuple) else None
-        if isinstance(kind, tuple):          # ('light', role, rgb)
+        if kind == 'gauge':                  # instrument faces + needles: glow at night like stock dials
+            mi, used = gauges.dial_material(dial_tpl, mname, acmat.textures.get('txDiffuse'), bank,
+                                            donor.media, media)
+            tref |= used
+            mats.append(mi.to_blob())
+            indices.append((mname, 0))
+            kind = 'textured'
+        elif isinstance(kind, tuple):        # ('light', role, rgb)
             mi, used = lights.make_material(light_tpl[kind[1]], mname, kind[1], kind[2], bank, lights.colour_param(light_tpl))
             tref |= used
             mats.append(mi.to_blob())
@@ -662,6 +695,9 @@ def convert(s: Settings):
                 pos = (np.c_[pos, np.ones(len(pos))] @ Dinv)[:, :3].astype(np.float32)
                 nrm = (nrm @ Dinv[:3, :3]).astype(np.float32)
                 tan = np.c_[tan[:, :3] @ Dinv[:3, :3], tan[:, 3:]].astype(np.float32)
+            for obj, (bi, piv) in needle_of.items():
+                if f'/{obj}/' in m.path or m.path.endswith('/' + obj):
+                    bone, pos = bi, (pos - piv).astype(np.float32)     # bone space (rest rotation = identity)
             uv, tris, uv1 = m.uv, m.tris, None
             if kind == 'paint':       # special paints (camo, wood...) tile over TEXCOORD1 at an even density
                 pos, nrm, uv, tan, tris, uv1 = pattern_uv(pos, nrm, uv, tan, tris)
@@ -683,6 +719,9 @@ def convert(s: Settings):
     skel = Bundle.parse(donor.zip.read(entries[body_entry])).first('Skel')
     if spindle is not None and 'boneSteeringWheelSpindle' in [b[0] for b in skel_bones(skel.data)[0]]:
         skel.data = skel_set(skel.data, 'boneSteeringWheelSpindle', skel_bones(skel_data)[0][spindle_index][4])
+    for bname in ('boneSpeed', 'boneTach'):          # the body model's own Skel must match skeleton.modelbin
+        if bname in bone_names and bname in [b[0] for b in skel_bones(skel.data)[0]]:
+            skel.data = skel_set(skel.data, bname, skel_bones(skel_data)[0][bone_names.index(bname)][4])
     empty_mi = lib.instance('black_plastic'); empty_mi.name = 'empty'
     empty = build_model([MeshIn('empty_LODS0', 0, np.zeros((3, 3), np.float32), np.tile([0, 1, 0], (3, 1)).astype(np.float32),
                                 np.zeros((3, 2), np.float32), np.tile([1, 0, 0, 1], (3, 1)).astype(np.float32),
@@ -861,6 +900,8 @@ def convert(s: Settings):
         data = donor.zip.read(n)
         if low == body_entry:
             data = body_data
+        elif low in gauge_files:
+            data = gauge_files[low]
         elif low in lamp_files:
             data = _retarget_modelbin(lamp_files[low], old, new)
         elif low == 'lights.bin' and lights_data is not None:

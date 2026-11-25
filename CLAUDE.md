@@ -5,7 +5,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 
-## Status (v0.21: lights done)
+## Status (v0.22 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -115,6 +115,20 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
   functions; role mapping from material names works for the 22B, other donors need checking.
 - v0.21: when a donor's two reverse materials use different presets, both sides use the one fewer other lamps share.
 - v0.21: owner happy with the lights, moving on.
+- Owner's order from here: thumbnails -> gauges -> first-guess stats -> engine sound -> second AC car -> desktop UI.
+- v0.22: THUMBNAILS: numpy z-buffer rasteriser (3x SS, smooth normals, perspective UVs, alpha cutouts, one glass layer,
+  SSAO, studio env reflections). Old renderer was MIRRORED (_look used a right-handed cross product; FH2 axes are
+  left-handed) -> fixed, camera now front-LEFT (yaw -38) so the nose still points left like stock tiles.
+  GAUGES (gauges.py): game plays Animations/speedometer.gr2 at frame = km/h and tachometer.gr2 at frame = rpm/10
+  (30 fps; checked on Civic/Abarth/BMW dials + tach maxima of all 5; the 22B speedo ends at frame 112 for a 180 km/h
+  dial = odd one out -> ask owner to check needle vs HUD). Granny v7 uncompressed: CRC32(file[104:]) at byte 40; track
+  = constant position (D3Constant32f, = skeleton pos - per-car offset, 22B (0,1.868,0.636)) + D4nK16uC15u orientation
+  (same axes as Skel). We rewrite in place: degree 1, table entry 0, n knots over 0..max, Duration. AC ARROW_SPEED/RPM
+  meshes on boneSpeed/boneTach in bone space (rest = AC pivot, identity rotation), rotation axis = node axis toward
+  the driver, clockwise. AC analog_instruments: RPM LUT, SPEED STEP deg per km/h (analog_speed_curve.lut = mph dial
+  variant, unused). This mod's STEP under-reads its own km/h dial x1.70 -> Settings.gauge_speed_scale / --speedo-scale
+  (UI later: dash preview at 100 km/h, thumbnail.render(camera=...)). Dial glow: lights.ini interior LIGHT meshes named
+  gauge/needle get the donor's per-car int_gauges material, AC dial texture as diffuse AND lite (0x4e0d5e89) layer.
 - Next: second AC car (generalise; light presets per donor); better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);

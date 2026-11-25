@@ -16,8 +16,8 @@ TEX = 1024                     # textures sampled at up to this size
 
 def _look(eye, target):
     f = target - eye; f /= np.linalg.norm(f)
-    r = np.cross(f, [0, 1, 0]); r /= np.linalg.norm(r)
-    u = np.cross(r, f)
+    r = np.cross([0, 1, 0], f); r /= np.linalg.norm(r)       # FH2 axes are left-handed (+x right, +y up, +z fwd)
+    u = np.cross(f, r)
     return np.stack([r, u, f])
 
 
@@ -71,8 +71,9 @@ def _fragments(S, iz, W, H, budget=6_000_000):
         s = e
 
 
-def render(car, paint_rgb, texture_image, size=(816, 459), ss=3, yaw_deg=38, pitch_deg=12, shadow=True):
-    """car: accar.ACCar in FH2 axes (Y up, Z forward, -X left). paint_rgb: 0..1. texture_image(name) -> PIL or None"""
+def render(car, paint_rgb, texture_image, size=(816, 459), ss=3, yaw_deg=-38, pitch_deg=12, shadow=True, camera=None):
+    """car: accar.ACCar in FH2 axes (Y up, Z forward, -X left). paint_rgb: 0..1. texture_image(name) -> PIL or None.
+    camera: optional (eye, target, fov degrees) for close-ups (no auto framing, no shadow)"""
     W, H = size[0] * ss, size[1] * ss
     verts, nrms, uvs, tris, tmat = [], [], [], [], []
     mats = []                                  # (kind, linear albedo texture (h,w,3) or None, alpha (h,w) or None, flat)
@@ -123,6 +124,9 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=3, yaw_deg=38, pit
     radius = np.linalg.norm(hi - lo) / 2
     fov = np.radians(26)
     eye = centre + d * radius / np.sin(fov / 2) * 0.66
+    if camera is not None:
+        eye, centre, fov = np.asarray(camera[0], float), np.asarray(camera[1], float), np.radians(camera[2])
+        shadow = False
     R = _look(eye, centre)
     C = (Vw - eye) @ R.T
     f = (H / 2) / np.tan(fov / 2)
@@ -131,8 +135,12 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=3, yaw_deg=38, pit
     plo, phi = P[used].min(0), P[used].max(0)
     k = min(0.86 * W / (phi - plo)[0], 0.78 * H / (phi - plo)[1])
     fit = lambda q: (q - (plo + phi) / 2) * k + np.array([W / 2, H * 0.52])
+    if camera is not None:
+        fit = lambda q: q + np.array([W / 2, H / 2])
     S = fit(P)[T]
     iz = 1.0 / np.maximum(C[:, 2], 1e-3)[T]
+    if camera is not None:
+        S[(C[:, 2] < 0.02)[T].any(1)] = -1e9      # behind the camera
 
     def uv_at(ti, l1, l2, inv):
         tv = T[ti]
