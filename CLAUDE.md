@@ -4,6 +4,7 @@ Converter: Assetto Corsa car folder -> NEW add-on car for Forza Horizon 2 (Xbox 
 Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH2_ExtraOptions.log`
 (next to azimuth.exe). Repo is PUBLIC: never commit game files or AC car files.
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
+GOALS: ROADMAP.md (owner's goal list; keep it current: move finished items to Done, add what comes up).
 
 ## Status (v0.22 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
