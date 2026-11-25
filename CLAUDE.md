@@ -134,6 +134,10 @@ Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copie
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);
   gauge needles (boneSpeed/boneTach); baked AO; then the desktop UI + .exe (PySide6 + PyInstaller, sklearn bundled).
 - Donor search in the final tool: scan ALL zips in the user's FH2 `media\cars` (side, wheelbase).
+- OWNER REQUIREMENT (desktop UI): BULK conversion of many AC cars with an option to SKIP ALL MENUS / prompts. Every
+  per-car choice (donor, speedo scale, stats override, skin, ids, names) needs an automatic default; interactive
+  previews (dash/needle preview, wheel preview, warnings) are optional extras, never required. Bulk: auto car ids
+  (next free 3000-8999), one mod folder per car, summary report of warnings at the end.
 
 ## Local data (not in repo; re-upload if the session is new)
 - /home/user/gamefiles/cars/*.zip — FH2 stock car zips: BMW_M4_14, FIA_AbarthPuntoSS_13, HON_CivicTypeR_97 (RHD),
