@@ -4,11 +4,10 @@ Owner's goals for the converter (kept up to date by Claude; tell Claude to chang
 Done items are listed at the bottom.
 
 ## Short term: make one car work properly (the Subaru)
-1. **Better Autoshow pictures**: new renderer in v0.22, waiting for the in-game check.
-2. **Working gauge needles**: speedo + tacho in v0.22, waiting for the in-game check (speedo vs HUD reading).
-3. **Accurate first stats estimate**: the prediction runs ~70 PI high (S1 850 predicted vs A 779 in game).
-4. **Body shading**: paint should look like FH2 paint, not flat or plasticky (smooth normals, baked AO).
-5. **Fuel needle** (and other small gauges) moving.
+1. **Side mirrors**: AC's placeholder (red lines) -> FH2 real-time mirrors. Fixed, ships in the next build.
+2. **Accurate first stats estimate**: the prediction runs ~70 PI high (S1 850 predicted vs A 779 in game).
+3. **Body shading**: paint should look like FH2 paint, not flat or plasticky (smooth normals, baked AO).
+4. **Fuel needle** (and other small gauges) moving.
 
 ## Mid term: make cars feel like real FH2 cars, then build the app
 1. **Correct parts**: proper upgrade options (rims, tyres, engine parts); paint and vinyls apply properly.
@@ -38,4 +37,5 @@ Done items are listed at the bottom.
 - Wheels: stock-style morphing rims, correct size/stance, visible at speed, brakes behind spokes (v0.17).
 - Wiper / cowl area no longer see-through (v0.18).
 - Working lights: headlight beams, tail, brake, both reverse lamps (v0.21).
+- New Autoshow pictures (proper renderer, no longer mirrored) and moving speedo/tacho needles + dial glow (v0.22).
 - Thumbnail colours, Autoshow stats can be set from the in-game values (v0.15–v0.16).

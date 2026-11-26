@@ -130,6 +130,10 @@ GOALS: ROADMAP.md (owner's goal list; keep it current: move finished items to Do
   variant, unused). This mod's STEP under-reads its own km/h dial x1.70 -> Settings.gauge_speed_scale / --speedo-scale
   (UI later: dash preview at 100 km/h, thumbnail.render(camera=...)). Dial glow: lights.ini interior LIGHT meshes named
   gauge/needle get the donor's per-car int_gauges material, AC dial texture as diffuse AND lite (0x4e0d5e89) layer.
+- v0.22 tested: GAUGES WORK ("beautifully"), Autoshow picture much better. Left: red lines on the side mirrors = AC
+  mirrors.ini meshes use 'mirror_placement.png' (AC swaps in the live view). Fixed (v0.23): those meshes get the
+  library specificuse\mirrorleft/right/center.materialbin (FH2 real-time mirrors, no params); UVs normalised to stock
+  convention 0..1, u along +x, v downwards (AC's u was flipped, v at -12..-11).
 - Next: second AC car (generalise; light presets per donor); better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);

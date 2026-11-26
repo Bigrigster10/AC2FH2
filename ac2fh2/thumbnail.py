@@ -98,7 +98,9 @@ def render(car, paint_rgb, texture_image, size=(816, 459), ss=3, yaw_deg=-38, pi
         if '/RIM_BLUR' in m.path.upper() or 'shadow' in m.path.lower() or len(m.tris) == 0:
             continue
         kind = classify(mat).kind
-        if mat.shader == 'ksTyres':
+        if 'mirror_placement' in str(mat.textures.get('txDiffuse', '')).lower():
+            kind = 'chrome'                    # AC mirror placeholder (replaced by the live mirror view in game)
+        elif mat.shader == 'ksTyres':
             kind = 'tyre'
         elif mat.shader == 'ksBrakeDisc':
             kind = 'textured'

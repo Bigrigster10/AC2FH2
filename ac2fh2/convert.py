@@ -581,6 +581,9 @@ def convert(s: Settings):
     log(f'  body fit: scale {np.round(scale, 3).tolist()} offset {np.round(offset, 3).tolist()}')
     lib = TemplateLibrary()
     missing = lib.harvest(s.fh2_cars)
+    from .library import OPTIONAL_KINDS
+    opt = {KINDS[k][0].lower() for k in OPTIONAL_KINDS}
+    missing = [m_ for m_ in missing if m_ not in opt]
     if missing:
         raise RuntimeError(f'material templates not found in the FH2 cars given: {missing}')
     bank = TextureBank(car, skin, media, s.max_texture, log)
@@ -599,10 +602,21 @@ def convert(s: Settings):
     from . import gauges
     dial_names = gauges.dial_meshes(car)
     dial_tpl = gauges.gauge_template(donor.zip) if dial_names else None
+    # AC mirrors.ini meshes (AC paints a placeholder texture that it replaces at runtime) -> FH2 real-time mirrors
+    raw = car.data.get('mirrors.ini')
+    mirror_names = {sec['NAME'] for sec in lights.parse_ini(raw.decode('latin1', 'replace') if isinstance(raw, bytes)
+                                                           else raw) if sec.get('NAME')}
     groups = {}
     for m in keep:
         kind = s.material_overrides.get(m.material.name) or classify(m.material).kind
         if kind == 'skip':
+            continue
+        if mirror_names and any(seg in mirror_names for seg in m.path.split('/')):
+            cx = float(m.pos[:, 0].mean())
+            mk = 'mirror_left' if cx < -0.3 else 'mirror_right' if cx > 0.3 else 'mirror_center'
+            if KINDS[mk][0].lower() not in lib.by_lib:
+                mk = 'chrome'
+            groups.setdefault(f'{m.material.name}_{mk}', (mk, m.material, []))[2].append(m)
             continue
         if dial_names and any(seg in dial_names for seg in m.path.split('/')) and dial_tpl is not None:
             groups.setdefault(f'{m.material.name}_gauge', ('gauge', m.material, []))[2].append(m)
@@ -699,6 +713,11 @@ def convert(s: Settings):
                 if f'/{obj}/' in m.path or m.path.endswith('/' + obj):
                     bone, pos = bi, (pos - piv).astype(np.float32)     # bone space (rest rotation = identity)
             uv, tris, uv1 = m.uv, m.tris, None
+            if kind.startswith('mirror_'):     # stock mirror UVs: 0..1 over the glass, u along +x, v downwards
+                uv = (uv - uv.min(0)) / np.maximum(uv.max(0) - uv.min(0), 1e-6)
+                if np.corrcoef(pos[:, 0], uv[:, 0])[0, 1] < 0: uv[:, 0] = 1 - uv[:, 0]
+                if np.corrcoef(pos[:, 1], uv[:, 1])[0, 1] > 0: uv[:, 1] = 1 - uv[:, 1]
+                uv = uv.astype(np.float32)
             if kind == 'paint':       # special paints (camo, wood...) tile over TEXCOORD1 at an even density
                 pos, nrm, uv, tan, tris, uv1 = pattern_uv(pos, nrm, uv, tan, tris)
             mesh = MeshIn(f'{m.name}_LODS0', i, pos, nrm, uv, tan, tris,

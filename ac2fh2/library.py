@@ -18,11 +18,17 @@ KINDS = {
     'black_plastic':  ('blkplastic_mgl.materialbin', 0),
     'textured':       ('interiorengine\\interior_lod1.materialbin', 0),
     'textured_alpha': ('badges\\mit_emblem_002.materialbin', 0),
+    # real-time mirrors (the game renders the view into them; UV 0..1, u along +x, v down)
+    'mirror_left':    ('specificuse\\mirrorleft.materialbin', 0),
+    'mirror_right':   ('specificuse\\mirrorright.materialbin', 0),
+    'mirror_center':  ('specificuse\\mirrorcenter.materialbin', 0),
 }
+OPTIONAL_KINDS = {'mirror_left', 'mirror_right', 'mirror_center'}     # fall back to chrome if no donor has them
 KIND_LABELS = {
     'paint': 'Car paint (in-game colour)', 'glass': 'Glass / windows', 'chrome': 'Chrome',
     'rubber': 'Rubber / trim', 'black_plastic': 'Black plastic', 'textured': 'Textured (opaque)',
     'textured_alpha': 'Textured with transparency (badges, lights, decals)', 'skip': "Don't convert",
+    'mirror_left': 'Mirror (left)', 'mirror_right': 'Mirror (right)', 'mirror_center': 'Mirror (rear view)',
 }
 # parameters that take the converted Assetto Corsa diffuse / alpha texture
 DIFFUSE_PARAMS = {name_hash('DiffuseATexture'), name_hash('CH1DiffuseTextureTexture')}
