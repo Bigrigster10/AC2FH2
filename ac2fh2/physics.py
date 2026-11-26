@@ -3,14 +3,20 @@ and stock stats (PI, class, ratings, times, price) predicted the way the game's 
 
 Calibrated on the stock game database:
   * SimPeakPower = 10 x peak kW;  SimPeakTorque = TorqueScale / 100
-  * forced induction: power = base curve x (1 + 0.43 x StockBoost[bar])
+  * forced induction: SimPeakPower ~ curve peak x (1 + 0.43 x StockBoost[bar]) (stat only; in game the curve is
+    multiplied by the stock aspiration part's scales, which we make neutral because AC curves include boost)
 """
 import sqlite3
 from dataclasses import dataclass
 
 import numpy as np
 
-BOOST_K = 0.43
+BOOST_K = 0.43          # DB stat relation only (SimPeakPower vs curve on stock cars); NOT how the game applies boost
+ASPIRATION_SCALES = {'List_UpgradeEngineDSC': ('ZeroRPMScale', 'RedlineRPMScale', 'RobScale'),
+                     'List_UpgradeEngineCSC': ('ZeroRPMScale', 'RedlineRPMScale', 'RobScale'),
+                     'List_UpgradeEngineTurboSingle': ('MaxScale', 'MinScale', 'RobScale'),
+                     'List_UpgradeEngineTurboTwin': ('MaxScale', 'MinScale', 'RobScale'),
+                     'List_UpgradeEngineTurboQuad': ('MaxScale', 'MinScale', 'RobScale')}
 
 
 def ac_ini(text):
@@ -135,8 +141,10 @@ def apply(doc, db_path, car_id, ph: ACPhysics, log=print):
     while db.execute('select 1 from Data_Engine where EngineID=?', (eid,)).fetchone(): eid += 1
     stock_eng['EngineID'] = eid
     de = _rows(db, 'Data_Engine', 'EngineID=?', (src_eng,))[0]
-    factor = 1 + BOOST_K * ph.boost
-    base = ph.torque / factor                                  # what the game will boost back up
+    # the game multiplies the curve by the STOCK forced-induction part (DSC/CSC Zero/RedlineRPMScale, turbo Min/MaxScale,
+    # all x RobScale), not by StockBoost: measured in game on v0.22 (Corvette DSC part, x1.29 -> 460 hp instead of 586).
+    # The AC curve already includes its boost, so that stock part is made neutral below and upgrades become relative.
+    base = ph.torque
     peak = float(base.max())
     asp = (de['AspirationID_Stock'] if de['AspirationID_Stock'] > 1 else 2) if ph.boost else 1
     de.update({'EngineID': eid, 'AspirationID_Stock': asp, 'StockBoost-bar': round(ph.boost, 3), 'MomentInertia': round(ph.inertia * 0.6, 4),
@@ -178,6 +186,16 @@ def apply(doc, db_path, car_id, ph: ACPhysics, log=print):
                           'StallRPM': float(min(ph.idle, 1500)),
                           'StartRPM': float(ph.limiter * stock_cam['StartRPM'] / donor_red)})
         _put(doc, db, t, rows)
+    for t, keys in ASPIRATION_SCALES.items():
+        rows = _tables(doc, t)
+        stock = next((r for r in rows if r.get('IsStock')), None)
+        if not stock:
+            continue
+        ref = {k: float(stock[k]) for k in keys if stock.get(k)}
+        for r in rows:
+            for k, v in ref.items():
+                r[k] = round(float(r[k]) / v, 5)
+        log(f'  {t.replace("List_UpgradeEngine", "")} stock part made neutral (x1); upgrades keep their relative gain')
     cols = _cols(db, 'List_TorqueCurve')
     for cid, vals in used_curves.items():
         row = {c: 0.0 for c in cols}
@@ -314,3 +332,44 @@ def predict_stats(doc, db_path, log=print, measured=None):
         f'0-60 {out["Time:0-60-sec"]:.1f}s, top {out["TopSpeed-mph"]:.0f} mph, price {out["BaseCost"]:,} CR')
     db.close()
     return out
+
+
+# ------------------------------------------------------------------ engine identity (Autoshow / upgrade screen text)
+CYLINDER_IDS = {4: 1, 5: 2, 6: 3, 8: 4, 10: 5, 12: 6, 16: 7, 2: 8, 3: 9}
+CONFIGS = {'v': 1, 'w': 2, 'i': 3, 'inline': 3, 'straight': 3, 'rotary': 4, 'f': 5, 'flat': 5, 'boxer': 5, 'h': 5}
+
+
+def engine_identity(ui, ph):
+    """displacement (cc), cylinders, layout and aspiration from AC ui_car.json tags/specs/description, e.g.
+    '2.5L flat-4 16v', 'turbo' -> (2500, 4, 'F', 'turbo'); anything unknown -> None"""
+    text = ' '.join([*(ui.get('tags') or []), str(ui.get('description') or ''), str(ui.get('name') or '')]).lower()
+    import re as _re
+    cc = None
+    m = _re.search(r'(\d{1,2}(?:[.,]\d)?)\s*(?:l\b|litre|liter)', text) or _re.search(r'(\d{3,4})\s*cc', text)
+    if m:
+        v = float(m.group(1).replace(',', '.'))
+        cc = int(round(v * 1000 if v < 20 else v, -1))
+    cyl = layout = None
+    m = _re.search(r'\b(v|w|i|f|h|inline|straight|flat|boxer)[- ]?(\d{1,2})\b', text)
+    if m:
+        layout, cyl = CONFIGS.get(m.group(1)), int(m.group(2))
+    if 'rotary' in text or 'wankel' in text:
+        layout, cyl = 4, cyl or 2
+    asp = 'turbo' if (ph.boost or 'turbo' in text) else 'supercharged' if 'supercharg' in text else 'natural'
+    return cc, cyl, layout, asp
+
+
+def apply_identity(doc, ui, ph, log=print):
+    cc, cyl, layout, asp = engine_identity(ui, ph)
+    dc = _tables(doc, 'Data_Car')[0]; de = _tables(doc, 'Data_Engine')[0]
+    if cc:
+        dc['Displacement'] = cc
+    if cyl in CYLINDER_IDS:
+        dc['CylinderID'] = de['CylinderID'] = CYLINDER_IDS[cyl]
+    if layout:
+        dc['EngineConfigID'] = de['ConfigID'] = layout
+    dc['AspirationTypeId'] = {'turbo': 2, 'supercharged': 5}.get(asp, 1)
+    letter = {1: 'V', 2: 'W', 3: 'I', 4: 'R', 5: 'F'}.get(layout, '')
+    de['EngineName'] = (f'{cc / 1000:.1f}L ' if cc else '') + (f'{letter}{cyl or ""}' if letter else '') + \
+        {'turbo': ' Turbo', 'supercharged': ' SC'}.get(asp, '')
+    log(f'  engine identity: {de["EngineName"].strip()} ({cc or "?"} cc)')

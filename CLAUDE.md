@@ -6,7 +6,7 @@ Azimuth + Extra Options). Owner tests in-game and reports with screenshots + `FH
 Sister project: github.com/Bigrigster10/FH2-AnimatedCamos (animated camos; copied fh2 format modules from here).
 GOALS: ROADMAP.md (owner's goal list; keep it current: move finished items to Done, add what comes up).
 
-## Status (v0.22 sent for testing)
+## Status (v0.23 sent for testing)
 - v0.1 tested in game: car loads, in Autoshow, buyable, drivable. Problems seen: body rendered pure black,
   small thumbnail scrambled, driver on wrong side (LHD donor, RHD AC car), stats/price copied from donor.
 - v0.2: AO texture added (suspected black cause), small-texture tiling fix, AC physics + predicted stats.
@@ -134,6 +134,15 @@ GOALS: ROADMAP.md (owner's goal list; keep it current: move finished items to Do
   mirrors.ini meshes use 'mirror_placement.png' (AC swaps in the live view). Fixed (v0.23): those meshes get the
   library specificuse\mirrorleft/right/center.materialbin (FH2 real-time mirrors, no params); UVs normalised to stock
   convention 0..1, u along +x, v downwards (AC's u was flipped, v at -12..-11).
+- v0.22 in-game Upgrades screen: 460 hp / 461 lb-ft / 2910 lb / 60% / 6,162 cc, PI A 778. We wrote 586 hp / 797 Nm:
+  exactly x0.785. ROOT CAUSE: the game does NOT boost by StockBoost; it multiplies the curve by the STOCK aspiration
+  part (Corvette DSC Zero/RedlineRPMScale 1.357 x RobScale 0.934 ~ x1.29) while we had divided by 1+0.43*1.5.
+  v0.23: curve = full AC curve (boost included); stock DSC/CSC/Turbo* row made neutral (x1) and every row of that
+  table divided by the stock values (upgrades keep relative gain) -> physics.ASPIRATION_SCALES. Engine identity from
+  ui_car.json tags ('2.5L flat-4', 'turbo'): Displacement, CylinderID, ConfigID, AspirationTypeId, EngineName.
+  Stats model check (8-fold CV over stock cars): PI MAE 0.023 (~23 display PI), no bias, extra features don't help;
+  for this car at 460 hp it said 808 vs real 778. measured_stats override dropped from the build (engine changed).
+  Open: stock aspiration part is still the donor's DSC (turbo AC car) -> prefer a turbo physics donor later.
 - Next: second AC car (generalise; light presets per donor); better
   thumbnails; why the stat prediction runs ~70 PI high;
   lights glow (lbk_* materials + LightFunctionCarLightParam, AC lights.ini, donor Lights.bin positions);

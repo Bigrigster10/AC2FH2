@@ -5,7 +5,8 @@ Done items are listed at the bottom.
 
 ## Short term: make one car work properly (the Subaru)
 1. **Side mirrors**: AC's placeholder (red lines) -> FH2 real-time mirrors. Fixed, ships in the next build.
-2. **Accurate first stats estimate**: the prediction runs ~70 PI high (S1 850 predicted vs A 779 in game).
+2. **Accurate first stats estimate**: main cause found: the engine only made 78.5% of its power in game (fixed in v0.23).
+   The guess itself is about +-23 PI on stock cars; check Autoshow vs My Cars PI on v0.23.
 3. **Body shading**: paint should look like FH2 paint, not flat or plasticky (smooth normals, baked AO).
 4. **Fuel needle** (and other small gauges) moving.
 

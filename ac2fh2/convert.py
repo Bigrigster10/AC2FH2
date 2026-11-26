@@ -967,6 +967,7 @@ def convert(s: Settings):
     if paints:   # Autoshow / default paint rows follow the manufacturer list
         doc['tables']['Combo_Colors'] = {'key': ['ID'], 'insert': colors.combo_rows(s.gamedb, s.car_id, paints)}
     physics.apply(doc, s.gamedb, s.car_id, ph, log)
+    physics.apply_identity(doc, ui, ph, log)
     bodykit = ('List_UpgradeCarBodyFrontBumper', 'List_UpgradeCarBodyRearBumper', 'List_UpgradeCarBodySideSkirt',
                'List_UpgradeCarBodyHood', 'List_UpgradeRearWing')
     for t in bodykit:
